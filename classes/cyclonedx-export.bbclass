@@ -161,24 +161,28 @@ def generate_packages_list(products_names, version):
 def append_to_vex_vulnerabilities(d, vex, cve, sbom_serial_number, bom_ref):
     from oe.cve_check import decode_cve_status
 
-    decoded_status, state, justification = decode_cve_status(d, cve)
+    decoded_status = decode_cve_status(d, cve)
+    if not 'mapping' in decoded_status:
+        bb.debug(2, f"Could not find status mapping in {cve}")
+        return
+
     # Currently, only "Patched" and "Ignored" status are relevant to us.
     # See https://docs.yoctoproject.org/singleindex.html#term-CVE_CHECK_STATUSMAP for possible statuses.
-    if decoded_status == "Patched":
+    if decoded_status["mapping"] == "Patched":
         bb.debug(2, f"Found patch for {cve} in {d.getVar('BPN')}")
         vex_state = "resolved"
-    elif decoded_status == "Ignored":
+    elif decoded_status["mapping"] == "Ignored":
         bb.debug(2, f"Found ignore statement for {cve} in {d.getVar('BPN')}")
         vex_state = "not_affected"
     else:
-        bb.debug(2, f"Found unknown or irrelevant CVE status {decoded_status} for {cve} in {d.getVer('BPN')}. Skipping...")
+        bb.debug(2, f"Found unknown or irrelevant CVE status {decoded_status['mapping']} for {cve} in {d.getVer('BPN')}. Skipping...")
         return
 
     detail_string = ""
-    if state:
-        detail_string += f"STATE: {state}\n"
-    if justification:
-        detail_string += f"JUSTIFICATION: {justification}\n"
+    if decoded_status["detail"]:
+        detail_string += f"STATE: {decoded_status['detail']}\n"
+    if decoded_status["description"]:
+        detail_string += f"JUSTIFICATION: {decoded_status['description']}\n"
     vex["vulnerabilities"].append({
         "id": cve,
         # vex documents require a valid source, see https://github.com/DependencyTrack/dependency-track/issues/2977
