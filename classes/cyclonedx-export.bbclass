@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
-# Copyright 2022 BG Networks, Inc.
-# Copyright (C) 2024 Savoir-faire Linux Inc. (<www.savoirfairelinux.com>).
+# SPDX-FileCopyrightText: Copyright (C) 2022 BG Networks, Inc.
+# SPDX-FileCopyrightText: Copyright (C) 2024 Savoir-faire Linux Inc. (<www.savoirfairelinux.com>).
+# SPDX-FileCopyrightText: Copyright (C) 2024 iris-GmbH infrared & intelligent sensors.
 
 # The product name that the CVE database uses.  Defaults to BPN, but may need to
 # be overriden per recipe (for example tiff.bb sets CVE_PRODUCT=libtiff).
@@ -25,7 +26,7 @@ CYCLONEDX_SBOM_SERIAL_PLACEHOLDER = "<SBOM_SERIAL>"
 # resolve CVE_CHECK_IGNORE and CVE_STATUS_GROUPS,
 # taken from https://git.yoctoproject.org/poky/commit/meta/classes/cve-check.bbclass?id=be9883a92bad0fe4c1e9c7302c93dea4ac680f8c
 # SPDX-License-Identifier: MIT
-# Copyright OpenEmbedded Contributors
+# SPDX-FileCopyrightText: Copyright OpenEmbedded Contributors
 python () {
     # Fallback all CVEs from CVE_CHECK_IGNORE to CVE_STATUS
     cve_check_ignore = d.getVar("CVE_CHECK_IGNORE")
@@ -246,7 +247,7 @@ python do_deploy_cyclonedx() {
 
     # taken from https://github.com/yoctoproject/poky/blob/fec201518be3c35a9359ec8c37675a33e458b92d/meta/classes/cve-check.bbclass
     # SPDX-License-Identifier: MIT
-    # Copyright OpenEmbedded Contributors
+    # SPDX-FileCopyrightText: Copyright OpenEmbedded Contributors
     # Collect sbom data from runtime packages
 
     recipes = set()
