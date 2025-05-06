@@ -1,10 +1,13 @@
 SPDX-License-Identifier: MIT
 
-Copyright (C) 2024 Savoir-faire Linux Inc. (<www.savoirfairelinux.com>).
-Copyright (C) 2024 iris-GmbH infrared & intelligent sensors
+SPDX-FileCopyrightText: Copyright (C) 2024 iris-GmbH infrared & intelligent sensors
+SPDX-FileCopyrightText: Copyright (C) 2024 Savoir-faire Linux Inc. (<www.savoirfairelinux.com>).
 
 Based on previous work from `github.com/bgnetworks/meta-dependencytrack`:  
-Copyright 2022 BG Networks, Inc.
+SPDX-FileCopyrightText: Copyright 2022 BG Networks, Inc.
+
+Includes code snippet which is:
+SPDX-FileCopyrightText: Copyright OpenEmbedded Contributors
 
 ---
 
