@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (C) 2022 BG Networks, Inc.
 # SPDX-FileCopyrightText: Copyright (C) 2024 Savoir-faire Linux Inc. (<www.savoirfairelinux.com>).
 # SPDX-FileCopyrightText: Copyright (C) 2024 iris-GmbH infrared & intelligent sensors.
+# SPDX-FileCopyrightText: Copyright (C) 2025 balena, inc.
 
 # The product name that the CVE database uses.  Defaults to BPN, but may need to
 # be overriden per recipe (for example tiff.bb sets CVE_PRODUCT=libtiff).
@@ -10,7 +11,7 @@ CVE_VERSION ??= "${PV}"
 
 CYCLONEDX_RUNTIME_PACKAGES_ONLY ??= "1"
 
-CYCLONEDX_EXPORT_DIR ??= "${DEPLOY_DIR}/cyclonedx-export"
+CYCLONEDX_EXPORT_DIR ??= "${DEPLOY_DIR}/cyclonedx-export/${PN}"
 CYCLONEDX_EXPORT_SBOM ??= "${CYCLONEDX_EXPORT_DIR}/bom.json"
 CYCLONEDX_EXPORT_VEX ??= "${CYCLONEDX_EXPORT_DIR}/vex.json"
 CYCLONEDX_TMP_WORK_DIR ??= "${WORKDIR}/cyclonedx"
@@ -209,6 +210,7 @@ python do_deploy_cyclonedx() {
     from datetime import datetime, timezone
     import os
 
+    image_basename = d.getVar("PN")
     timestamp = datetime.now(timezone.utc).isoformat()
 
     # Generate unique serial numbers for sbom and vex document
@@ -286,6 +288,8 @@ python do_deploy_cyclonedx() {
             vex["vulnerabilities"].append(pn_cve)
 
     d.setVar("PN", save_pn)
+
+    os.makedirs(d.getVar("CYCLONEDX_EXPORT_DIR"), exist_ok=True)
 
     write_json(d.getVar("CYCLONEDX_EXPORT_SBOM"), sbom)
     write_json(d.getVar("CYCLONEDX_EXPORT_VEX"), vex)
