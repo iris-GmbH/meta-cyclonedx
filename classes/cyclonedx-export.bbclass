@@ -210,7 +210,6 @@ python do_deploy_cyclonedx() {
     from datetime import datetime, timezone
     import os
 
-    image_basename = d.getVar("PN")
     timestamp = datetime.now(timezone.utc).isoformat()
 
     # Generate unique serial numbers for sbom and vex document
@@ -288,8 +287,6 @@ python do_deploy_cyclonedx() {
             vex["vulnerabilities"].append(pn_cve)
 
     d.setVar("PN", save_pn)
-
-    os.makedirs(d.getVar("CYCLONEDX_EXPORT_DIR"), exist_ok=True)
 
     write_json(d.getVar("CYCLONEDX_EXPORT_SBOM"), sbom)
     write_json(d.getVar("CYCLONEDX_EXPORT_VEX"), vex)
