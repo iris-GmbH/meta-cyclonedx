@@ -30,7 +30,7 @@ BBLAYERS += "${BSPDIR}/sources/meta-cyclonedx"
 
 Note for balenaos: 
 - clone this repo in the `layers` directory instead of sources
-- for kirkstone or scarthgap support, checkout the `compat/kirkstone` branch
+- for kirkstone or scarthgap support, checkout the `kirkstone` or `scarthgap` branch
 - add the layer in `layers/meta-balena-*DT*/conf/layer.conf`
 
 ## Configuration
