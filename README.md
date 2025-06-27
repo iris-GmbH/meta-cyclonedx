@@ -2,7 +2,7 @@
 
 `meta-cyclonedx` is a [Yocto](https://www.yoctoproject.org/) meta-layer which produces [CycloneDX](https://cyclonedx.org/) Software Bill of Materials (aka [SBOM](https://www.ntia.gov/SBOM)) from your root filesystem.
 
-This repository is forked from [BG Networks repository](https://github.com/bgnetworks/meta-dependencytrack) but differs by the following:
+This repository is forked from [iris-GmBH/meta-cyclonedx](https://github.com/iris-GmbH/meta-cyclonedx), itself forked from [BG Networks repository](https://github.com/bgnetworks/meta-dependencytrack) but differs by the following:
 
 - Direct integration with DependencyTrack has been removed in favour of generic CycloneDX support.
 - Support for multiple supported Yocto (LTS) releases.
@@ -10,6 +10,8 @@ This repository is forked from [BG Networks repository](https://github.com/bgnet
 - Included [purl](https://github.com/package-url/purl-spec) package urls.
 - Added generation of an additional CycloneDX VEX file which contains information on patched and ignored CVEs from within the OpenEmbedded build system.
 - Added option to reduce the SBOM size by limiting to runtime packages ([which might potentially come at some expense](#potentially-missing-packages-after-runtime-filtering))
+- Adding support for multi-target builds
+- Backported support for kirkstone and scarthgap
 
 ## Installation
 
@@ -17,7 +19,7 @@ To install this meta-layer simply clone the repository into the `sources` direct
 
 ```sh
 $ cd sources
-$ git clone https://github.com/savoirfairelinux/meta-cyclonedx.git
+$ git clone https://github.com/balena-os/meta-cyclonedx.git
 ```
 
 and in your `bblayers.conf` file:
@@ -25,6 +27,11 @@ and in your `bblayers.conf` file:
 ```sh
 BBLAYERS += "${BSPDIR}/sources/meta-cyclonedx"
 ```
+
+Note for balenaos: 
+- clone this repo in the `layers` directory instead of sources
+- for kirkstone or scarthgap support, checkout the `compat/kirkstone` branch
+- add the layer in `layers/meta-balena-*DT*/conf/layer.conf`
 
 ## Configuration
 
@@ -34,13 +41,15 @@ To enable and configure the layer simply inherit the `cyclonedx-export` class in
 INHERIT += "cyclonedx-export"
 ```
 
+Note for balenaos: it should be added to `layers/meta-balena-*dt*/conf/samples/local.conf.sample`
+
 By default, meta-cyclonedx will only include runtime packages in its sbom and vex export files which drastically reduces the number of packages. However, this can lead to valid packages being omitted from the bom ([see](#potentially-missing-packages-after-runtime-filtering)). If desired, you can enable to include all packages at build-time by setting `CYCLONEDX_RUNTIME_PACKAGES_ONLY = "1"` in your `local.conf`.
 
 ## Usage
 
 Once everything is configured simply build your image as you normally would.
 
-By default the final CycloneDX SBOMs are saved in the folder `${DEPLOY_DIR}/cyclonedx-export` as `bom.json` and `vex.json` respectively.
+By default the final CycloneDX SBOMs are saved in the folder `${DEPLOY_DIR}/cyclonedx-export/*target*/` as `bom.json` and `vex.json` respectively.
 
 ## Uploading to DependencyTrack (tested against DT v4.11.4)
 
