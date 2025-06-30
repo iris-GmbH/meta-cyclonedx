@@ -2,7 +2,7 @@
 
 `meta-cyclonedx` is a [Yocto](https://www.yoctoproject.org/) meta-layer which produces [CycloneDX](https://cyclonedx.org/) Software Bill of Materials (aka [SBOM](https://www.ntia.gov/SBOM)) from your root filesystem.
 
-This repository is forked from [BG Networks repository](https://github.com/bgnetworks/meta-dependencytrack) but differs by the following:
+This repository was originally forked from [BG Networks repository](https://github.com/bgnetworks/meta-dependencytrack) but differs by the following:
 
 - Direct integration with DependencyTrack has been removed in favour of generic CycloneDX support.
 - Support for multiple supported Yocto (LTS) releases.
@@ -17,7 +17,7 @@ To install this meta-layer simply clone the repository into the `sources` direct
 
 ```sh
 $ cd sources
-$ git clone https://github.com/savoirfairelinux/meta-cyclonedx.git
+$ git clone https://github.com/iris-GmbH/meta-cyclonedx.git
 ```
 
 and in your `bblayers.conf` file:
@@ -40,7 +40,7 @@ By default, meta-cyclonedx will only include runtime packages in its sbom and ve
 
 Once everything is configured simply build your image as you normally would.
 
-By default the final CycloneDX SBOMs are saved in the folder `${DEPLOY_DIR}/cyclonedx-export` as `bom.json` and `vex.json` respectively.
+By default the final CycloneDX SBOMs are saved in the folder `${DEPLOY_DIR}/${PN}/cyclonedx-export` as `bom.json` and `vex.json` respectively.
 
 ## Uploading to DependencyTrack (tested against DT v4.11.4)
 
