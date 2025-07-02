@@ -58,6 +58,7 @@ python do_cyclonedx_package_collect() {
     Collect package information and CVE data from all packages built for the target architecture.
     """
     from oe.cve_check import decode_cve_status
+    from oe.cve_check import get_patched_cves
 
     pn = d.getVar("PN")
 
@@ -67,23 +68,28 @@ python do_cyclonedx_package_collect() {
             return
 
     # get all CVE product names and version from the recipe
-    name = d.getVar("CVE_PRODUCT")
-    version = d.getVar("CVE_VERSION")
+    products = d.getVar("CVE_PRODUCT").split()
 
     # We create and populate a per-recipe partial sbom which will be added to the sstate cache
     pn_list = {}
     pn_list["pkgs"] = []
     cves = []
     # append all defined package names for recipe to pn_list pkgs
-    for pkg in generate_packages_list(name, version):
-        if not next((c for c in pn_list["pkgs"] if c["cpe"] == pkg["cpe"]), None):
-            pn_list["pkgs"].append(pkg)
-            bom_ref = pkg["bom-ref"]
-
-            # append any cve status within recipe to pn_list cves
-            for cve in (d.getVarFlags("CVE_STATUS") or {}):
-                append_to_vex(d, cve, cves, bom_ref)
-
+    for name in products:
+        version = d.getVar("CVE_VERSION")
+        for pkg in generate_packages_list(name, version):
+            if not next((c for c in pn_list["pkgs"] if c["cpe"] == pkg["cpe"]), None):
+                pn_list["pkgs"].append(pkg)
+                bom_ref = pkg["bom-ref"]
+                # append any CVEs patched
+                for cve_id in get_patched_cves(d):
+                    cve = (cve_id, "Patched", "", "")
+                    append_to_vex(d, cve, cves, bom_ref)
+                # append any cve status within recipe to pn_list cves
+                for cve_id in (d.getVarFlags("CVE_STATUS") or {}):
+                    decoded_status, state, justification = decode_cve_status(d, cve_id)
+                    cve = (cve_id, decoded_status, state, justification)
+                    append_to_vex(d, cve, cves, bom_ref)
     pn_list["cves"] = cves
 
     # write partial sbom to the recipes work folder
@@ -161,9 +167,7 @@ def append_to_vex(d, cve, cves, bom_ref):
     Collect CVE status information from within open embedded recipes and append to add to cve dictionary.
     This could be backported CVE fixes or ignored CVEs.
     """
-    from oe.cve_check import decode_cve_status
-
-    decoded_status, state, justification = decode_cve_status(d, cve)
+    cve, decoded_status, state, justification = cve
     # Currently, only "Patched" and "Ignored" status are relevant to us.
     # See https://docs.yoctoproject.org/singleindex.html#term-CVE_CHECK_STATUSMAP for possible statuses.
     if decoded_status == "Patched":
