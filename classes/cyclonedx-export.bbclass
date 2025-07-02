@@ -173,7 +173,7 @@ def append_to_vex(d, cve, cves, bom_ref):
         bb.debug(2, f"Found ignore statement for {cve} in {d.getVar('BPN')}")
         vex_state = "not_affected"
     else:
-        bb.debug(2, f"Found unknown or irrelevant CVE status {decoded_status} for {cve} in {d.getVer('BPN')}. Skipping...")
+        bb.debug(2, f"Found unknown or irrelevant CVE status {decoded_status} for {cve} in {d.getVar('BPN')}. Skipping...")
         return
 
     detail_string = ""
