@@ -81,7 +81,7 @@ We use the `image_list_installed_packages` function from upstream OpenEmbedded a
 
 ### Missing Dependencies with Modern Programming Languages
 
-OpenEmbedded and its core mechanisms work best with "traditional" programming languages such as C and C++, as these are the languages that it were additionally designed around. For instance, a core-assumption prevalent in many OE mechanisms (including those we depend on in meta-cyclonedx) is that each library is described in its own OE recipe. This however does not work well with many modern programming languages that come with their own package manager (e.g. NPM, Cargo, Go Modules, ...) that do not necessarily integrate well into OpenEmbedded and pull hundreds of external dependencies (good luck writing a separate OE recipe for each dependency in a small-medium sized Node.js project).
+OpenEmbedded and its core mechanisms work best with "traditional" programming languages such as C and C++, as these are the languages that they were initially designed around. For instance, a core-assumption prevalent in many OE mechanisms (including those we depend on in meta-cyclonedx) is that each library is described in its own OE recipe. This however does not work well with many modern programming languages that come with their own package manager (e.g. NPM, Cargo, Go Modules, ...) that do not necessarily integrate well into OpenEmbedded and pull hundreds of external dependencies (good luck writing a separate OE recipe for each dependency in a small-medium sized Node.js project).
 
 Thus, if you rely on packages written in programming languages that come with their own package managers you might be better of by using a divide and conquer approach for creating complete CycloneDX SBOMs (your mileage may vary):
 
