@@ -34,7 +34,7 @@ To enable and configure the layer simply inherit the `cyclonedx-export` class in
 INHERIT += "cyclonedx-export"
 ```
 
-By default, meta-cyclonedx will only include runtime packages in its sbom and vex export files which drastically reduces the number of packages. However, this can lead to valid packages being omitted from the bom ([see](#potentially-missing-packages-after-runtime-filtering)). If desired, you can enable to include all packages at build-time by setting `CYCLONEDX_RUNTIME_PACKAGES_ONLY = "1"` in your `local.conf`.
+By default, meta-cyclonedx will only include runtime packages in its sbom and vex export files which drastically reduces the number of packages. However, this can lead to valid packages being omitted from the bom ([see](#potentially-missing-packages-after-runtime-filtering)). If desired, you can the configuration to include all build-time packages by setting `CYCLONEDX_RUNTIME_PACKAGES_ONLY = "0"` in your `local.conf`.
 
 ## Usage
 
@@ -51,10 +51,10 @@ At the time of writing DependencyTrack does not support uploading component and 
 ### Manual Upload
 
 1. Go into an existing project in your DependencyTrack instance or create a new one.
-2. Go to the *Components* tab and click *Upload BOM*.
+2. Go to the _Components_ tab and click _Upload BOM_.
 3. Select the `bom.json` file from your deploy directory.
 4. Wait for the vulnerability analysis to complete.
-5. Go to the *Audit Vulnerabilities* tab and click *Apply VEX*.
+5. Go to the _Audit Vulnerabilities_ tab and click _Apply VEX_.
 6. Select the `vex.json` file from your deploy directory.
 
 ### Automated Upload
