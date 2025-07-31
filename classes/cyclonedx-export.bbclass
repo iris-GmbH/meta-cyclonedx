@@ -186,7 +186,8 @@ def append_to_vex(d, cve, cves, bom_ref):
 
     detail_string = ""
     detail_string += f"STATE: {status}\n"
-    detail_string += f"JUSTIFICATION: {justification}\n"
+    if justification:
+        detail_string += f"JUSTIFICATION: {justification}\n"
 
     cves.append({
         "id": cve_id,
