@@ -58,6 +58,7 @@ python do_cyclonedx_package_collect() {
     Collect package information and CVE data from all packages built for the target architecture.
     """
     from oe.cve_check import decode_cve_status
+    from oe.cve_check import get_patched_cves
 
     pn = d.getVar("PN")
 
@@ -80,10 +81,27 @@ python do_cyclonedx_package_collect() {
             pn_list["pkgs"].append(pkg)
             bom_ref = pkg["bom-ref"]
 
+            # append any CVEs patched
+            for cve_id in get_patched_cves(d):
+                cve = (
+                    cve_id,
+                    "Patched",
+                    "fix-file-included",
+                    ""
+                )
+                append_to_vex(d, cve, cves, bom_ref)
             # append any cve status within recipe to pn_list cves
-            for cve in (d.getVarFlags("CVE_STATUS") or {}):
+            for cve_id in (d.getVarFlags("CVE_STATUS") or {}):
+                decoded_status, state, justification = decode_cve_status(d, cve_id)
+                cve = (
+                    cve_id,
+                    decoded_status,
+                    state,
+                    justification
+                )
                 append_to_vex(d, cve, cves, bom_ref)
 
+    # append any cve status within recipe to pn_list cves
     pn_list["cves"] = cves
 
     # write partial sbom to the recipes work folder
@@ -159,34 +177,33 @@ def generate_packages_list(products_names, version):
 def append_to_vex(d, cve, cves, bom_ref):
     """
     Collect CVE status information from within open embedded recipes and append to add to cve dictionary.
-    This could be backported CVE fixes or ignored CVEs.
+    This could be backported, patched or ignored CVEs.
     """
-    from oe.cve_check import decode_cve_status
+    cve_id, abbrev_status, status, justification = cve
 
-    decoded_status, state, justification = decode_cve_status(d, cve)
     # Currently, only "Patched" and "Ignored" status are relevant to us.
     # See https://docs.yoctoproject.org/singleindex.html#term-CVE_CHECK_STATUSMAP for possible statuses.
-    if decoded_status == "Patched":
-        bb.debug(2, f"Found patch for {cve} in {d.getVar('BPN')}")
+    if abbrev_status == "Patched":
+        bb.debug(2, f"Found patch for {cve_id} in {d.getVar('BPN')}")
         vex_state = "resolved"
-    elif decoded_status == "Ignored":
-        bb.debug(2, f"Found ignore statement for {cve} in {d.getVar('BPN')}")
+    elif abbrev_status == "Ignored":
+        bb.debug(2, f"Found ignore statement for {cve_id} in {d.getVar('BPN')}")
         vex_state = "not_affected"
     else:
-        bb.debug(2, f"Found unknown or irrelevant CVE status {decoded_status} for {cve} in {d.getVar('BPN')}. Skipping...")
+        bb.debug(2, f"Found unknown or irrelevant CVE status {abbrev_status} for {cve_id} in {d.getVar('BPN')}. Skipping...")
         return
 
     detail_string = ""
-    if state:
-        detail_string += f"STATE: {state}\n"
+    if status:
+        detail_string += f"STATE: {status}\n"
     if justification:
         detail_string += f"JUSTIFICATION: {justification}\n"
 
     cves.append({
-        "id": cve,
+        "id": cve_id,
         # vex documents require a valid source, see https://github.com/DependencyTrack/dependency-track/issues/2977
         # this should always be NVD for yocto CVEs.
-        "source": {"name": "NVD", "url": f"https://nvd.nist.gov/vuln/detail/{cve}"},
+        "source": {"name": "NVD", "url": f"https://nvd.nist.gov/vuln/detail/{cve_id}"},
         "analysis": {
             "state": vex_state,
             "detail": detail_string,
