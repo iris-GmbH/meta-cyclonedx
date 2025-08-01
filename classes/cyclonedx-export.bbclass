@@ -72,13 +72,18 @@ python do_cyclonedx_package_collect() {
     sbom_serial_number = sbom["serialNumber"][len("urn:uuid:"):]
     vex = read_json(d.getVar("CYCLONEDX_EXPORT_VEX"))
 
+    dependencies = []
+    bom_ref_map = {comp["name"]: comp["bom-ref"] for comp in sbom["components"] if "bom-ref" in comp}
+    existing_components_by_cpe = {c.get("cpe"): c for c in sbom["components"] if "cpe" in c}
+
     for pkg in generate_packages_list(name, version):
-        if not next((c for c in sbom["components"] if c["cpe"] == pkg["cpe"]), None):
+        if not pkg["cpe"] in existing_components_by_cpe:
             sbom["components"].append(pkg)
             bom_ref = pkg["bom-ref"]
+            bom_ref_map[pkg["name"]] = bom_ref
 
-            # populate vex file with patched CVEs
-            for _, patched_cve in enumerate(oe.cve_check.get_patched_cves(d)):
+            # Add CVEs
+            for patched_cve in oe.cve_check.get_patched_cves(d):
                 bb.debug(2, f"Found patch for CVE {patched_cve} in {name}@{version}")
                 vex["vulnerabilities"].append({
                     "id": patched_cve,
@@ -107,7 +112,34 @@ python do_cyclonedx_package_collect() {
                         # resolution will of CVE will be applied to all components within the project that contain the CVE
                         "affects": [{"ref": f"urn:cdx:{sbom_serial_number}/1#{bom_ref}"}]
                     })
-    
+
+            # Add dependencies
+            dep_entry = {
+                "ref": bom_ref,
+                "dependsOn": []
+            }
+
+            for dep_name in (d.getVar("DEPENDS") or "").split():
+                dep_name = dep_name.strip().split()[0]
+                dep_ref = bom_ref_map.get(dep_name)
+                if not dep_ref:
+                    dep_ref = f"{dep_name}-unknown"
+                    bom_ref_map[dep_name] = dep_ref
+                    sbom["components"].append({
+                        "name": dep_name,
+                        "version": "unknown",
+                        "type": "library",
+                        "bom-ref": dep_ref
+                    })
+
+                dep_entry["dependsOn"].append(dep_ref)
+
+            if dep_entry["dependsOn"]:
+                dependencies.append(dep_entry)
+
+    if dependencies:
+        sbom["dependencies"] = sbom.get("dependencies", []) + dependencies
+
     # write it back to the deploy directory
     write_json(d.getVar("CYCLONEDX_EXPORT_SBOM"), sbom)
     write_json(d.getVar("CYCLONEDX_EXPORT_VEX"), vex)
