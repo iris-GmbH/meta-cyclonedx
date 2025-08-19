@@ -85,6 +85,10 @@ python do_cyclonedx_package_collect() {
             for cve in (d.getVarFlags("CVE_STATUS") or {}):
                 append_to_vex(d, cve, cves, bom_ref)
 
+            # append any patched cve that has not been included in the CVE_STATUS yet
+            for file in (d.getVarFlags("SRC_URI") or {}):
+                append_patches_to_vex(d, file, cves, bom_ref)
+
     pn_list["cves"] = cves
 
     # write partial sbom to the recipes work folder
@@ -197,6 +201,38 @@ def append_to_vex(d, cve, cves, bom_ref):
         },
         "affects": [{"ref": f"urn:cdx:{d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER')}/1#{bom_ref}"}]
     })
+    return
+
+def append_patches_to_vex(d, file, cves, bom_ref):
+    """
+    Collect CVE status information from patches applied to the recipe
+    CVE patches has a file format such as `file://CVE-2024-3596_00.patch`
+    """
+
+    # check if the uri start with file://CVE- and end is a patch
+    if not file.startswith("file://CVE-") or not file.endswith(".patch"):
+        return
+
+    # Extract the CVE ID from the file path (without the _xx)
+    cve_id = file[len("file://"): -len(".patch")].split("_")[0]
+
+    # Check if the CVE is already listed as patched, and add the justification
+    for cve in cves:
+        if cve["id"] == cve_id:
+            cve["analysis"]["detail"] += f"\nJUSTIFICATION: patch found in {file}"
+            return
+
+    # Append the CVE ID to the list of CVEs
+    cves.append({
+        "id": cve_id,
+        "source": {"name": "NVD", "url": f"https://nvd.nist.gov/vuln/detail/{cve_id}"},
+        "analysis": {
+            "state": "resolved",
+            "detail": f"Patch applied from {file}",
+        },
+        "affects": [{"ref": f"urn:cdx:{d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER')}/1#{bom_ref}"}]
+    })
+
     return
 
 def decode_cve_status(d, cve):
