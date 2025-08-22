@@ -160,7 +160,7 @@ def get_recipe_dependencies(d):
     """
     runtime_only = d.getVar("CYCLONEDX_RUNTIME_PACKAGES_ONLY") == "1"
     pn = d.getVar("PN")
-    runtime_deps = (d.getVar("RDEPENDS_" + pn) or "").split()
+    runtime_deps = (d.getVar("RDEPENDS:" + pn) or "").split()
     ignored_suffixes = set((d.getVar("SPECIAL_PKGSUFFIX") or "").split())
 
     if runtime_only:
@@ -177,7 +177,10 @@ def get_recipe_dependencies(d):
             continue
         # If package is virtual, we retrieve his provider
         if dep.startswith("virtual/"):
-            dep = d.getVar("PREFERRED_PROVIDER_" + dep) or dep
+            if runtime_only:
+                dep = d.getVar("PREFERRED_RPROVIDER_" + dep) or d.getVar("PREFERRED_PROVIDER_" + dep) or dep
+            else:
+                dep = d.getVar("PREFERRED_PROVIDER_" + dep) or dep
         # ignore non-target packages
         if any(dep.endswith(suffix) for suffix in ignored_suffixes):
             continue
@@ -203,13 +206,12 @@ def resolve_dependency_ref(depends, bom_ref_map, alias_map):
             return bom_ref_map[real_name]["bom-ref"]
     
     # Clean and resolve
-    cleaned_name = re.sub(r"[0-9\- .]", "", depends)
-    if cleaned_name in bom_ref_map:
-        return bom_ref_map[cleaned_name]["bom-ref"]
+    sanitized_name = re.sub(r"[0-9\- .]", "", depends)
+    if sanitized_name in bom_ref_map:
+        return bom_ref_map[sanitized_name]["bom-ref"]
     
-    # Retourner None si aucune résolution trouvée
+    # Return None if no solution found
     return None
-
 
 def generate_packages_list(products_names, version):
     """
@@ -342,7 +344,7 @@ python do_deploy_cyclonedx() {
             recipes.add(pkg_data["PN"])
     else:
         recipes = {pn for pn in os.listdir(cyclonedx_work_dir_root) if os.path.isdir(os.path.join(cyclonedx_work_dir_root, pn))}
-        
+
     save_pn = d.getVar("PN")
 
     # Create a bom_ref_map for dependencies sanitarization
