@@ -409,12 +409,12 @@ python do_deploy_cyclonedx() {
                                 comp = bom_ref_map[alias_map[depends]] 
                                 if comp not in pn_list["pkgs"] :
                                     pn_list["pkgs"].append(comp)
+                if resolved_depends :
+                    updated_entry = {"ref": dep_entry["ref"], "dependsOn": resolved_depends}
+                    pn_list["dependencies"].append(updated_entry)
                 
-                updated_entry = {"ref": dep_entry["ref"], "dependsOn": resolved_depends}
-                pn_list["dependencies"].append(updated_entry)
-                
-                if updated_entry not in sbom["dependencies"]:
-                    sbom["dependencies"].append(updated_entry)
+                    if updated_entry not in sbom["dependencies"]:
+                        sbom["dependencies"].append(updated_entry)
             
             write_json(pn_list_filepath, pn_list)
 
