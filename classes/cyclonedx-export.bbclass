@@ -156,19 +156,12 @@ def write_json(path, content):
 def get_recipe_dependencies(d):
     """ 
     Return recipe names which depend on the current one.
-    Combines DEPENDS and RDEPENDS if CYCLONEDX_RUNTIME_PACKAGES_ONLY is set to 0.
     """
-    runtime_only = d.getVar("CYCLONEDX_RUNTIME_PACKAGES_ONLY") == "1"
     pn = d.getVar("PN")
     runtime_deps = (d.getVar("RDEPENDS:" + pn) or "").split()
+    build_deps = (d.getVar("DEPENDS") or "").split()
+    deps = build_deps + runtime_deps
     ignored_suffixes = set((d.getVar("SPECIAL_PKGSUFFIX") or "").split())
-
-    if runtime_only:
-        deps = runtime_deps
-    else:
-        build_deps = (d.getVar("DEPENDS") or "").split()
-        deps = build_deps + runtime_deps
-
     # Resolves virtual/* dependencies to their preferred providers.
     resolved_deps = set()
     for dep in deps:
@@ -177,16 +170,12 @@ def get_recipe_dependencies(d):
             continue
         # If package is virtual, we retrieve his provider
         if dep.startswith("virtual/"):
-            if runtime_only:
-                dep = d.getVar("PREFERRED_RPROVIDER_" + dep) or d.getVar("PREFERRED_PROVIDER_" + dep) or dep
-            else:
-                dep = d.getVar("PREFERRED_PROVIDER_" + dep) or dep
+            dep = d.getVar("PREFERRED_RPROVIDER_" + dep) or d.getVar("PREFERRED_PROVIDER_" + dep) or dep
         # ignore non-target packages
         if any(dep.endswith(suffix) for suffix in ignored_suffixes):
             continue
         
         resolved_deps.add(dep)
-
     return list(resolved_deps)
 
 def resolve_dependency_ref(depends, bom_ref_map, alias_map):
