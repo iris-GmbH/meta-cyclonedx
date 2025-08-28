@@ -182,7 +182,6 @@ def resolve_dependency_ref(depends, bom_ref_map, alias_map):
     """
     Replace dependency name by his bom-ref attribute
     """
-    import re 
 
     # Direct
     if depends in bom_ref_map:
@@ -193,12 +192,7 @@ def resolve_dependency_ref(depends, bom_ref_map, alias_map):
         real_name = alias_map[depends]
         if real_name in bom_ref_map:
             return bom_ref_map[real_name]["bom-ref"]
-    
-    # Clean and resolve
-    sanitized_name = re.sub(r"[0-9\- .]", "", depends)
-    if sanitized_name in bom_ref_map:
-        return bom_ref_map[sanitized_name]["bom-ref"]
-    
+
     # Return None if no solution found
     return None
 
