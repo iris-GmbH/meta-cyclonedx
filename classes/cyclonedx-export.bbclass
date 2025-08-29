@@ -95,6 +95,27 @@ python do_cyclonedx_package_collect() {
     # append any cve status within recipe to pn_list cves
     pn_list["cves"] = cves
 
+    # Add dependencies
+    dependencies = []
+
+    for comp in pn_list["pkgs"]:
+        main_ref = comp.get("bom-ref")
+        if not main_ref:
+            continue
+
+        dep_entry = {
+            "ref": main_ref,
+            "dependsOn": []
+        }
+
+        for dep_name in get_recipe_dependencies(d):
+            dep_entry["dependsOn"].append(dep_name)
+
+        if dep_entry["dependsOn"]:
+            dependencies.append(dep_entry)
+
+    pn_list["dependencies"] = dependencies
+
     # write partial sbom to the recipes work folder
     write_json(d.getVar("CYCLONEDX_TMP_PN_LIST"), pn_list)
 }
@@ -130,6 +151,50 @@ def write_json(path, content):
     Path(path).write_text(
         json.dumps(content, indent=2)
     )
+
+
+def get_recipe_dependencies(d):
+    """
+    Return recipe names which depend on the current one.
+    """
+    pn = d.getVar("PN")
+    runtime_deps = (d.getVar("RDEPENDS:" + pn) or "").split()
+    build_deps = (d.getVar("DEPENDS") or "").split()
+    deps = build_deps + runtime_deps
+    ignored_suffixes = set((d.getVar("SPECIAL_PKGSUFFIX") or "").split())
+    # Resolves virtual/* dependencies to their preferred providers.
+    resolved_deps = set()
+    for dep in deps:
+        dep = dep.strip()
+        if not dep:
+            continue
+        # If package is virtual, we retrieve his provider
+        if dep.startswith("virtual/"):
+            dep = d.getVar("PREFERRED_RPROVIDER_" + dep) or d.getVar("PREFERRED_PROVIDER_" + dep) or dep
+        # ignore non-target packages
+        if any(dep.endswith(suffix) for suffix in ignored_suffixes):
+            continue
+
+        resolved_deps.add(dep)
+    return list(resolved_deps)
+
+def resolve_dependency_ref(depends, bom_ref_map, alias_map):
+    """
+    Replace dependency name by his bom-ref attribute
+    """
+
+    # Direct
+    if depends in bom_ref_map:
+        return bom_ref_map[depends]["bom-ref"]
+
+    # By Alias
+    if depends in alias_map:
+        real_name = alias_map[depends]
+        if real_name in bom_ref_map:
+            return bom_ref_map[real_name]["bom-ref"]
+
+    # Return None if no solution found
+    return None
 
 def generate_packages_list(products_names, version):
     """
@@ -230,7 +295,8 @@ python do_deploy_cyclonedx() {
             "timestamp": timestamp,
             "tools": [{"name": "yocto"}]
         },
-        "components": []
+        "components": [],
+        "dependencies": []
     }
 
     # Generate vex document header
@@ -263,6 +329,28 @@ python do_deploy_cyclonedx() {
         recipes = {pn for pn in os.listdir(cyclonedx_work_dir_root) if os.path.isdir(os.path.join(cyclonedx_work_dir_root, pn))}
 
     save_pn = d.getVar("PN")
+
+    # Create a bom_ref_map for dependencies sanitarization
+    # And an alias_map to retrieve real pkg name
+    bom_ref_map = {}
+    alias_map = {}
+
+    # first loop to fill the dictionary
+    for pkg in recipes:
+        # To be able to use the CYCLONEDX_WORK_DIR_PN_LIST variable we have to evaluate
+        # it with the different PN names set each time.
+        d.setVar("PN", pkg)
+
+        pn_list_filepath = d.getVar("CYCLONEDX_WORK_DIR_PN_LIST")
+
+        if not os.path.exists(pn_list_filepath):
+            continue
+
+        pn_list = read_json(pn_list_filepath)
+        for pn_pkg in pn_list["pkgs"]:
+            bom_ref_map[pn_pkg["name"]]=pn_pkg
+            alias_map[d.getVar("PN")]=pn_pkg["name"]
+
     for pkg in recipes:
         # To be able to use the CYCLONEDX_WORK_DIR_PN_LIST variable we have to evaluate
         # it with the different PN names set each time.
@@ -286,6 +374,32 @@ python do_deploy_cyclonedx() {
             pn_cve["affects"][0]["ref"] = pn_cve["affects"][0]["ref"].replace(
                 d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER'), sbom_serial_number)
             vex["vulnerabilities"].append(pn_cve)
+
+        # Add dependencies
+        if deps := pn_list.get("dependencies"):
+            pn_list["dependencies"] = []
+
+            for dep_entry in deps:
+                resolved_depends = []
+
+                for depends in dep_entry["dependsOn"]:
+                    if resolved_ref := resolve_dependency_ref(depends, bom_ref_map, alias_map):
+                        if resolved_ref not in resolved_depends:
+                            resolved_depends.append(resolved_ref)
+
+                            # Add component to isolate file
+                            if ((depends in alias_map) and (alias_map[depends] in bom_ref_map)):
+                                comp = bom_ref_map[alias_map[depends]]
+                                if comp not in pn_list["pkgs"] :
+                                    pn_list["pkgs"].append(comp)
+                if resolved_depends :
+                    updated_entry = {"ref": dep_entry["ref"], "dependsOn": resolved_depends}
+                    pn_list["dependencies"].append(updated_entry)
+
+                    if updated_entry not in sbom["dependencies"]:
+                        sbom["dependencies"].append(updated_entry)
+
+            write_json(pn_list_filepath, pn_list)
 
     d.setVar("PN", save_pn)
 
