@@ -154,7 +154,7 @@ def write_json(path, content):
 
 
 def get_recipe_dependencies(d):
-    """ 
+    """
     Return recipe names which depend on the current one.
     """
     pn = d.getVar("PN")
@@ -174,7 +174,7 @@ def get_recipe_dependencies(d):
         # ignore non-target packages
         if any(dep.endswith(suffix) for suffix in ignored_suffixes):
             continue
-        
+
         resolved_deps.add(dep)
     return list(resolved_deps)
 
@@ -186,7 +186,7 @@ def resolve_dependency_ref(depends, bom_ref_map, alias_map):
     # Direct
     if depends in bom_ref_map:
         return bom_ref_map[depends]["bom-ref"]
-    
+
     # By Alias
     if depends in alias_map:
         real_name = alias_map[depends]
@@ -378,27 +378,27 @@ python do_deploy_cyclonedx() {
         # Add dependencies
         if deps := pn_list.get("dependencies"):
             pn_list["dependencies"] = []
-            
+
             for dep_entry in deps:
                 resolved_depends = []
-                
+
                 for depends in dep_entry["dependsOn"]:
                     if resolved_ref := resolve_dependency_ref(depends, bom_ref_map, alias_map):
                         if resolved_ref not in resolved_depends:
                             resolved_depends.append(resolved_ref)
-                            
+
                             # Add component to isolate file
                             if ((depends in alias_map) and (alias_map[depends] in bom_ref_map)):
-                                comp = bom_ref_map[alias_map[depends]] 
+                                comp = bom_ref_map[alias_map[depends]]
                                 if comp not in pn_list["pkgs"] :
                                     pn_list["pkgs"].append(comp)
                 if resolved_depends :
                     updated_entry = {"ref": dep_entry["ref"], "dependsOn": resolved_depends}
                     pn_list["dependencies"].append(updated_entry)
-                
+
                     if updated_entry not in sbom["dependencies"]:
                         sbom["dependencies"].append(updated_entry)
-            
+
             write_json(pn_list_filepath, pn_list)
 
     d.setVar("PN", save_pn)
