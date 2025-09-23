@@ -226,18 +226,18 @@ def get_recipe_dependencies(d):
 
 def resolve_dependency_ref(depends, bom_ref_map, alias_map):
     """
-    Replace dependency name by his bom-ref attribute
+    Resolve recipe name to package name and its bom-ref attribute
     """
 
     # Direct
     if depends in bom_ref_map:
-        return bom_ref_map[depends]["bom-ref"]
+        return depends, bom_ref_map[depends]["bom-ref"]
 
     # By Alias
     if depends in alias_map:
         real_name = alias_map[depends]
         if real_name in bom_ref_map:
-            return bom_ref_map[real_name]["bom-ref"]
+            return real_name, bom_ref_map[real_name]["bom-ref"]
 
     # Return None if no solution found
     return None
@@ -415,7 +415,7 @@ python do_deploy_cyclonedx() {
                 if pn_pkg["cpe"] == sbom_pkg["cpe"]:
                     break
             else:
-                sbom["components"].append(pn_pkg)
+            sbom["components"].append(pn_pkg)
         for pn_cve in pn_list["cves"]:
             pn_cve["affects"][0]["ref"] = pn_cve["affects"][0]["ref"].replace(
                 d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER'), sbom_serial_number)
@@ -424,21 +424,26 @@ python do_deploy_cyclonedx() {
         # Add dependencies
         if deps := pn_list.get("dependencies"):
             pn_list["dependencies"] = []
+            pn_list["dep-pkgs"] = []
 
             for dep_entry in deps:
                 resolved_depends = []
 
                 for depends in dep_entry["dependsOn"]:
-                    if resolved_ref := resolve_dependency_ref(depends, bom_ref_map, alias_map):
+                    resolved = resolve_dependency_ref(depends, bom_ref_map, alias_map)
+                    if resolved is not None:
+                        resolved_name, resolved_ref = resolved
+                        if any(pkg["name"] == resolved_name for pkg in pn_list["pkgs"]):
+                            continue
                         if resolved_ref not in resolved_depends:
                             resolved_depends.append(resolved_ref)
 
                             # Add component to isolate file
                             if ((depends in alias_map) and (alias_map[depends] in bom_ref_map)):
                                 comp = bom_ref_map[alias_map[depends]]
-                                if comp not in pn_list["pkgs"] :
-                                    pn_list["pkgs"].append(comp)
-                if resolved_depends :
+                                if comp not in pn_list["pkgs"] and comp not in pn_list["dep-pkgs"]:
+                                    pn_list["dep-pkgs"].append(comp)
+                if resolved_depends:
                     updated_entry = {"ref": dep_entry["ref"], "dependsOn": resolved_depends}
                     pn_list["dependencies"].append(updated_entry)
 
