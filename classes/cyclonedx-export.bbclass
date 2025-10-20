@@ -9,6 +9,22 @@
 CVE_PRODUCT ??= "${BPN}"
 CVE_VERSION ??= "${PV}"
 
+# CycloneDX specification version to generate
+# Options: "1.4", "1.6"
+# Version 1.4: Legacy format for compatibility with older tools
+# Version 1.6: Modern format with enhanced features (default)
+CYCLONEDX_SPEC_VERSION ??= "1.6"
+
+# Component scope support (CycloneDX 1.6 feature)
+# When enabled, components are marked as "required" (runtime) or "excluded" (build-time)
+# Set to "0" to disable (e.g., for certain SBOM profiles or tool compatibility)
+CYCLONEDX_ADD_COMPONENT_SCOPES ??= "1"
+
+# Vulnerability analysis timestamps (CycloneDX 1.6 feature)
+# When enabled, adds firstIssued and lastUpdated timestamps to vulnerability analysis
+# Set to "0" to disable for minimal VEX documents
+CYCLONEDX_ADD_VULN_TIMESTAMPS ??= "1"
+
 CYCLONEDX_RUNTIME_PACKAGES_ONLY ??= "1"
 
 CYCLONEDX_EXPORT_DIR ??= "${DEPLOY_DIR}/cyclonedx-export/${PN}"
@@ -199,6 +215,34 @@ def resolve_license_data(d):
 
     return license_info
 
+def create_tools_metadata(d):
+    """
+    Create tools metadata in the format appropriate for the CycloneDX spec version.
+    
+    Version 1.4: Array format [{"name": "yocto"}]
+    Version 1.6: Object format {"components": [{"type": "application", "name": "yocto", ...}]}
+    """
+    import uuid
+    
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
+    
+    if spec_version == "1.4":
+        # Legacy array format
+        return [{"name": "yocto"}]
+    else:
+        # Modern object format (1.6+)
+        return {
+            "components": [
+                {
+                    "type": "application",
+                    "name": "yocto",
+                    "bom-ref": str(uuid.uuid4())
+                }
+            ]
+        }
+
+
+
 def get_recipe_dependencies(d):
     """
     Return recipe names which depend on the current one.
@@ -252,6 +296,10 @@ def generate_packages_list(products_names, version):
 
     # keep only the short version which can be matched against vulnerabilities databases
     version = version.split("+git")[0]
+    
+    # Ensure version is never empty (required by some SBOM profiles)
+    if not version or version.strip() == "":
+        version = "unknown"
 
     # some packages have alternative names, so we split CVE_PRODUCT
     # convert to set to avoid duplicates
@@ -281,6 +329,8 @@ def append_to_vex(d, cve, cves, bom_ref):
     Collect CVE status information from within open embedded recipes and append to add to cve dictionary.
     This could be backported, patched or ignored CVEs.
     """
+    from datetime import datetime, timezone
+    
     cve_id, abbrev_status, status, justification = cve
 
     # Currently, only "Patched" and "Ignored" status are relevant to us.
@@ -300,15 +350,28 @@ def append_to_vex(d, cve, cves, bom_ref):
     if justification:
         detail_string += f"JUSTIFICATION: {justification}\n"
 
+    # Build analysis object
+    analysis = {
+        "state": vex_state,
+        "detail": detail_string
+    }
+    
+    # Add timestamps for CycloneDX 1.6+ when enabled
+    # This provides better tracking of when vulnerabilities were identified and updated
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
+    add_timestamps = d.getVar('CYCLONEDX_ADD_VULN_TIMESTAMPS') == "1"
+    
+    if spec_version == "1.6" and add_timestamps:
+        timestamp = datetime.now(timezone.utc).isoformat()
+        analysis["firstIssued"] = timestamp
+        analysis["lastUpdated"] = timestamp
+
     cves.append({
         "id": cve_id,
         # vex documents require a valid source, see https://github.com/DependencyTrack/dependency-track/issues/2977
         # this should always be NVD for yocto CVEs.
         "source": {"name": "NVD", "url": f"https://nvd.nist.gov/vuln/detail/{cve_id}"},
-        "analysis": {
-            "state": vex_state,
-            "detail": detail_string,
-        },
+        "analysis": analysis,
         "affects": [{"ref": f"urn:cdx:{d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER')}/1#{bom_ref}"}]
     })
     return
@@ -327,6 +390,9 @@ python do_deploy_cyclonedx() {
     # Generate unique serial numbers for sbom and vex document
     sbom_serial_number = str(uuid.uuid4())
     vex_serial_number = str(uuid.uuid4())
+    
+    # Get configured spec version
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
 
     cyclonedx_work_dir_root = d.getVar("CYCLONEDX_WORK_DIR_ROOT")
 
@@ -334,12 +400,12 @@ python do_deploy_cyclonedx() {
     bb.debug(2, f"Creating empty temporary sbom file with serial number {sbom_serial_number}")
     sbom = {
         "bomFormat": "CycloneDX",
-        "specVersion": "1.4",
+        "specVersion": spec_version,
         "serialNumber": f"urn:uuid:{sbom_serial_number}",
         "version": 1,
         "metadata": {
             "timestamp": timestamp,
-            "tools": [{"name": "yocto"}]
+            "tools": create_tools_metadata(d)
         },
         "components": [],
         "dependencies": []
@@ -349,12 +415,12 @@ python do_deploy_cyclonedx() {
     bb.debug(2, f"Creating empty temporary vex file with serial number {sbom_serial_number}")
     vex = {
         "bomFormat": "CycloneDX",
-        "specVersion": "1.4",
+        "specVersion": spec_version,
         "serialNumber": f"urn:uuid:{vex_serial_number}",
         "version": 1,
         "metadata": {
             "timestamp": timestamp,
-            "tools": [{"name": "yocto"}]
+            "tools": create_tools_metadata(d)
         },
         "vulnerabilities": []
     }
@@ -364,13 +430,18 @@ python do_deploy_cyclonedx() {
     # SPDX-FileCopyrightText: Copyright OpenEmbedded Contributors
     # Collect sbom data from runtime packages
 
+    # Determine runtime packages for scope assignment
+    runtime_recipes = set()
+    for pkg in list(image_list_installed_packages(d)):
+        pkg_info = os.path.join(d.getVar('PKGDATA_DIR'),
+                                'runtime-reverse', pkg)
+        pkg_data = oe.packagedata.read_pkgdatafile(pkg_info)
+        runtime_recipes.add(pkg_data["PN"])
+
+    # Determine which recipes to include
     recipes = set()
     if d.getVar('CYCLONEDX_RUNTIME_PACKAGES_ONLY') == "1":
-        for pkg in list(image_list_installed_packages(d)):
-            pkg_info = os.path.join(d.getVar('PKGDATA_DIR'),
-                                    'runtime-reverse', pkg)
-            pkg_data = oe.packagedata.read_pkgdatafile(pkg_info)
-            recipes.add(pkg_data["PN"])
+        recipes = runtime_recipes
     else:
         recipes = {pn for pn in os.listdir(cyclonedx_work_dir_root) if os.path.isdir(os.path.join(cyclonedx_work_dir_root, pn))}
 
@@ -415,6 +486,15 @@ python do_deploy_cyclonedx() {
                 if pn_pkg["cpe"] == sbom_pkg["cpe"]:
                     break
             else:
+                # Add scope field to indicate runtime vs build-time component
+                # Only added in CycloneDX 1.6+ and when enabled via configuration
+                # See https://cyclonedx.org/docs/1.6/json/#components_items_scope
+                # Can be disabled for certain SBOM profiles or tool compatibility
+                if spec_version == "1.6" and d.getVar('CYCLONEDX_ADD_COMPONENT_SCOPES') == "1":
+                    if pkg in runtime_recipes:
+                        pn_pkg["scope"] = "required"
+                    else:
+                        pn_pkg["scope"] = "excluded"
                 sbom["components"].append(pn_pkg)
         for pn_cve in pn_list["cves"]:
             pn_cve["affects"][0]["ref"] = pn_cve["affects"][0]["ref"].replace(
