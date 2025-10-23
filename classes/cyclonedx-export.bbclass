@@ -55,27 +55,36 @@ python do_cyclonedx_package_collect() {
     cves = []
     # append all defined package names for recipe to pn_list pkgs
     for pkg in generate_packages_list(name, version):
-        if not next((c for c in pn_list["pkgs"] if c["cpe"] == pkg["cpe"]), None):
-            pn_list["pkgs"].append(pkg)
-            bom_ref = pkg["bom-ref"]
+        if next((c for c in pn_list["pkgs"] if c["cpe"] == pkg["cpe"]), None):
+            continue
 
-            # append any CVEs either patched or taken from CVE_CHECK_IGNORE
-            for _, cve_id in enumerate(get_patched_cves(d)):
-                cve = (
-                    cve_id,
-                    "Patched",
-                    "fix-file-included",
-                    ""
-                )
-                append_to_vex(d, cve, cves, bom_ref)
-            for cve_id in set((d.getVar("CVE_CHECK_IGNORE") or "").split()):
-                cve = (
-                    cve_id,
-                    "Ignored",
-                    "cve-check-ignore-included",
-                    ""
-                )
-                append_to_vex(d, cve, cves, bom_ref)
+        bb.debug(2, f"Resolving license for {pkg['name']}")
+        license = resolve_license_data(d)
+        if license is not None:
+            pkg["licenses"] = license
+        else:
+            bb.warn(f"LICENSE variable not set for package {pn}")
+
+        pn_list["pkgs"].append(pkg)
+        bom_ref = pkg["bom-ref"]
+
+        # append any CVEs either patched or taken from CVE_CHECK_IGNORE
+        for _, cve_id in enumerate(get_patched_cves(d)):
+            cve = (
+                cve_id,
+                "Patched",
+                "fix-file-included",
+                ""
+            )
+            append_to_vex(d, cve, cves, bom_ref)
+        for cve_id in set((d.getVar("CVE_CHECK_IGNORE") or "").split()):
+            cve = (
+                cve_id,
+                "Ignored",
+                "cve-check-ignore-included",
+                ""
+            )
+            append_to_vex(d, cve, cves, bom_ref)
 
     # append any cve status within recipe to pn_list cves
     pn_list["cves"] = cves
@@ -137,6 +146,43 @@ def write_json(path, content):
         json.dumps(content, indent=2)
     )
 
+def resolve_license_data(d):
+    """
+    Resolves a given recipe LICENSE (see: https://docs.yoctoproject.org/singleindex.html#term-LICENSE)
+    for use in CycloneDX
+    """
+    # load spdx license identifiers
+    layerdir = d.getVar("CYCLONEDX_LAYERDIR")
+    licenses_file_path = f"{layerdir}/meta/files/spdx-license-list-data/licenses.json"
+    bb.debug(2, f"Loading SPDX licenses from {licenses_file_path}")
+    licenses_json = read_json(licenses_file_path)
+    spdx_licenses = [l["licenseId"] for l in licenses_json["licenses"]]
+
+    license = d.getVar("LICENSE", True)
+
+    license_info = None
+    # Check if the license is an expression
+    if "|" in license or "&" in license:
+        bb.debug(2, f"Adding {license} as expression.")
+        license_info = [{"expression": license}]
+
+    # Else if license is a known SPDX license, use license.id
+    elif license in spdx_licenses:
+        bb.debug(2, f"Found license {license} in in SPDX license IDs.")
+        license_info = [{"license": {"id": license}}]
+
+    # Else if there is a matching license mapping and it is a SPDX license ID
+    elif d.getVarFlag("SPDXLICENSEMAP", license) is not None and d.getVarFlag("SPDXLICENSEMAP", license) in spdx_licenses:
+        mapped_license = d.getVarFlag("SPDXLICENSEMAP", license)
+        bb.debug(2, f"Found SPDX ID mapping {mapped_license} for license {license}.")
+        license_info = [{"license": {"id": mapped_license}}]
+
+    # Else add this as license[0].name
+    else:
+        bb.debug(2, f"Unknown license {license}. Using raw name.")
+        license_info = [{"license": {"name": license}}]
+
+    return license_info
 
 def get_recipe_dependencies(d):
     """
