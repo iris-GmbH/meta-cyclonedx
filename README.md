@@ -65,7 +65,7 @@ CYCLONEDX_SPEC_VERSION = "1.4"
 
 **Version differences:**
 - **1.4**: Legacy format for compatibility with older tools
-- **1.6**: Modern format with component scopes, enhanced metadata, and timestamps (default)
+- **1.6**: Modern format with enhanced metadata and timestamps (default)
 
 ### Runtime vs Build-time Packages
 
@@ -97,22 +97,21 @@ This allows tools to filter components based on their use case:
 - **License compliance**: Include all components regardless of scope
 - **Supply chain tracking**: Include all components regardless of scope
 
-### Component Scopes (CycloneDX 1.6)
+### Component Scopes
 
-Component scopes are enabled by default when using CycloneDX 1.6. If you need to
-disable them (e.g., for compatibility with certain SBOM profiles or tools):
+Component scopes are enabled by default. If you need to disable them (e.g., for
+compatibility with certain SBOM profiles or tools):
 
 ```sh
 CYCLONEDX_ADD_COMPONENT_SCOPES = "0"
 ```
 
-**Note**: Component scopes are only available in CycloneDX 1.6. This setting has
-no effect when `CYCLONEDX_SPEC_VERSION = "1.4"`.
+Component scopes are available in both CycloneDX 1.4 and 1.6 specifications.
 
-### Vulnerability Analysis Timestamps (CycloneDX 1.6)
+### Vulnerability Analysis Timestamps
 
 By default, vulnerability analysis records include `firstIssued` and `lastUpdated`
-timestamps in CycloneDX 1.6. To generate minimal VEX documents without timestamps:
+timestamps when using CycloneDX 1.6. To generate minimal VEX documents without timestamps:
 
 ```sh
 CYCLONEDX_ADD_VULN_TIMESTAMPS = "0"
@@ -137,24 +136,17 @@ CYCLONEDX_ADD_VULN_TIMESTAMPS = "1"
 ### SBOM Profile Compatibility
 
 Different organizations may have specific SBOM profile requirements. The configuration
-options above allow you to customize the generated SBOMs to meet various profile needs:
+options above allow you to customize the generated SBOMs to meet various needs:
 
-**For profiles that prohibit component scopes:**
+**If your tools or profiles don't support component scopes:**
 ```sh
 CYCLONEDX_ADD_COMPONENT_SCOPES = "0"
 ```
 
-**For profiles requiring minimal metadata:**
+**For legacy tool compatibility:**
 ```sh
 CYCLONEDX_SPEC_VERSION = "1.4"
-CYCLONEDX_ADD_COMPONENT_SCOPES = "0"
-CYCLONEDX_ADD_VULN_TIMESTAMPS = "0"
 ```
-
-**For profiles requiring enhanced metadata** (future enhancements):
-- Some profiles require specific metadata (component, supplier, standards)
-- Support for additional required fields is planned for future releases
-- Contributions are welcome to extend profile support
 
 If you need to disable the scope field (e.g., for compatibility with certain
 SBOM profiles or tools that don't support it), you can set:

@@ -15,14 +15,16 @@ CVE_VERSION ??= "${PV}"
 # Version 1.6: Modern format with enhanced features (default)
 CYCLONEDX_SPEC_VERSION ??= "1.6"
 
-# Component scope support (CycloneDX 1.6 feature)
-# When enabled, components are marked as "required" (runtime) or "excluded" (build-time)
+# Component scope support
+# When enabled, components are marked as "required" (runtime) or "optional" (build-time)
 # Set to "0" to disable (e.g., for certain SBOM profiles or tool compatibility)
+# Available in both CycloneDX 1.4 and 1.6
 CYCLONEDX_ADD_COMPONENT_SCOPES ??= "1"
 
-# Vulnerability analysis timestamps (CycloneDX 1.6 feature)
+# Vulnerability analysis timestamps
 # When enabled, adds firstIssued and lastUpdated timestamps to vulnerability analysis
 # Set to "0" to disable for minimal VEX documents
+# Available in CycloneDX 1.6
 CYCLONEDX_ADD_VULN_TIMESTAMPS ??= "1"
 
 CYCLONEDX_RUNTIME_PACKAGES_ONLY ??= "1"
@@ -182,9 +184,10 @@ def resolve_license_data(d):
     Resolves a given recipe LICENSE (see: https://docs.yoctoproject.org/singleindex.html#term-LICENSE)
     for use in CycloneDX
     """
-    # load spdx license identifiers
+    # load spdx license identifiers for the appropriate CycloneDX spec version
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
     layerdir = d.getVar("CYCLONEDX_LAYERDIR")
-    licenses_file_path = f"{layerdir}/meta/files/spdx-license-list-data/licenses.json"
+    licenses_file_path = f"{layerdir}/meta/files/spdx-license-list-data/licenses-{spec_version}.json"
     bb.debug(2, f"Loading SPDX licenses from {licenses_file_path}")
     licenses_json = read_json(licenses_file_path)
     spdx_licenses = [l["licenseId"] for l in licenses_json["licenses"]]
@@ -229,8 +232,8 @@ def create_tools_metadata(d):
     if spec_version == "1.4":
         # Legacy array format
         return [{"name": "yocto"}]
-    else:
-        # Modern object format (1.6+)
+    elif spec_version == "1.6":
+        # Modern object format (1.6)
         return {
             "components": [
                 {
@@ -240,6 +243,9 @@ def create_tools_metadata(d):
                 }
             ]
         }
+    else:
+        bb.fatal(f"Unsupported CYCLONEDX_SPEC_VERSION: {spec_version}. Supported versions: 1.4, 1.6")
+
 
 
 
@@ -487,14 +493,12 @@ python do_deploy_cyclonedx() {
                     break
             else:
                 # Add scope field to indicate runtime vs build-time component
-                # Only added in CycloneDX 1.6+ and when enabled via configuration
-                # See https://cyclonedx.org/docs/1.6/json/#components_items_scope
                 # Can be disabled for certain SBOM profiles or tool compatibility
-                if spec_version == "1.6" and d.getVar('CYCLONEDX_ADD_COMPONENT_SCOPES') == "1":
+                if d.getVar('CYCLONEDX_ADD_COMPONENT_SCOPES') == "1":
                     if pkg in runtime_recipes:
                         pn_pkg["scope"] = "required"
                     else:
-                        pn_pkg["scope"] = "excluded"
+                        pn_pkg["scope"] = "optional"
                 sbom["components"].append(pn_pkg)
         for pn_cve in pn_list["cves"]:
             pn_cve["affects"][0]["ref"] = pn_cve["affects"][0]["ref"].replace(
