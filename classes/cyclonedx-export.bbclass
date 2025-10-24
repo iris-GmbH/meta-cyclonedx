@@ -62,6 +62,11 @@ python () {
                 d.setVarFlag("CVE_STATUS", cve, d.getVarFlag(cve_status_group, "status"))
         else:
             bb.warn("CVE_STATUS_GROUPS contains undefined variable %s" % cve_status_group)
+
+    # Validate CycloneDX specification version
+    spec_version = d.getVar("CYCLONEDX_SPEC_VERSION")
+    if spec_version not in ["1.4", "1.6"]:
+        bb.fatal(f"Unsupported CYCLONEDX_SPEC_VERSION: {spec_version}. Supported versions: 1.4, 1.6")
 }
 
 # Clean out work folder to avoid leftovers from previous builds when including build-time package
@@ -232,7 +237,7 @@ def create_tools_metadata(d):
     if spec_version == "1.4":
         # Legacy array format
         return [{"name": "yocto"}]
-    elif spec_version == "1.6":
+    else:
         # Modern object format (1.6)
         return {
             "components": [
@@ -243,11 +248,6 @@ def create_tools_metadata(d):
                 }
             ]
         }
-    else:
-        bb.fatal(f"Unsupported CYCLONEDX_SPEC_VERSION: {spec_version}. Supported versions: 1.4, 1.6")
-
-
-
 
 def get_recipe_dependencies(d):
     """

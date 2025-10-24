@@ -130,23 +130,6 @@ CYCLONEDX_ADD_COMPONENT_SCOPES = "1"
 CYCLONEDX_ADD_VULN_TIMESTAMPS = "1"
 ```
 
-### SBOM Profile Compatibility
-
-Different organizations may have specific SBOM profile requirements. The configuration
-options above allow you to customize the generated SBOMs to meet various needs:
-
-**If your tools or profiles don't support component scopes:**
-
-```sh
-CYCLONEDX_ADD_COMPONENT_SCOPES = "0"
-```
-
-**For legacy tool compatibility:**
-
-```sh
-CYCLONEDX_SPEC_VERSION = "1.4"
-```
-
 ## Usage
 
 Once everything is configured simply build your image as you normally would.
