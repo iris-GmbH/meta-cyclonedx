@@ -4,12 +4,11 @@
 produces [CycloneDX](https://cyclonedx.org/) Software Bill of Materials
 (aka [SBOMs](https://www.ntia.gov/SBOM)) from your target root filesystem.
 
-This repository was originally forked from
-[BG Networks repository](https://github.com/bgnetworks/meta-dependencytrack)
-but differs by the following:
+## Features
 
-- Direct integration with DependencyTrack has been removed in favor of generic
-  CycloneDX support.
+This layer generates **CycloneDX** compliant SBOMs with the following features:
+
+- Currently, support for CycloneDX specification 1.6 and 1.4
 - Support for multiple supported Yocto (LTS) releases.
 - Improved package matching against the [NIST NVD](https://nvd.nist.gov/) by
   fixing [CPE](https://nvd.nist.gov/products/cpe) generation process.
@@ -17,8 +16,13 @@ but differs by the following:
 - Added generation of an additional CycloneDX VEX file which contains
   information on patched and ignored CVEs from within the OpenEmbedded build
   system.
+- Component scopes to differentiate between runtime (`required`) and build-time
+  (`optional`) dependencies, enabling per-use-case SBOM filtering.
 - Added option to reduce the SBOM size by limiting SBOM collection to run-time
   packages ([which might potentially come at some expense](#potentially-missing-packages-after-runtime-filtering))
+
+This repository was originally forked from the
+[BG Networks repository](https://github.com/bgnetworks/meta-dependencytrack).
 
 ## Installation
 
@@ -28,10 +32,10 @@ directory, check out the corresponding branch for your Yocto release
 and add it to your `build/conf/bblayers.conf` file:
 
 ```sh
-$ cd sources
-$ git clone https://github.com/iris-GmbH/meta-cyclonedx.git
-$ cd meta-cyclonedx
-$ git checkout <YOCTO_RELEASE>
+cd sources
+git clone https://github.com/iris-GmbH/meta-cyclonedx.git
+cd meta-cyclonedx
+git checkout <YOCTO_RELEASE>
 ```
 
 and in your `bblayers.conf` file:
@@ -43,22 +47,87 @@ BBLAYERS += "${BSPDIR}/sources/meta-cyclonedx"
 ## Configuration
 
 To enable and configure the layer simply inherit the `cyclonedx-export` class
-in your `local.conf` file and then set the following variable:
+in your `local.conf` file:
 
 ```sh
 INHERIT += "cyclonedx-export"
 ```
 
+### CycloneDX Specification Version
+
+By default, meta-cyclonedx generates **CycloneDX 1.6** format SBOMs. If you need
+compatibility with tools that only support CycloneDX 1.4, you can configure:
+
+```sh
+CYCLONEDX_SPEC_VERSION = "1.4"
+```
+
+**Version differences:**
+
+- **1.4**: Legacy format for compatibility with older tools
+- **1.6**: Modern format with enhanced metadata and timestamps (default)
+
+### Runtime vs Build-time Packages
+
 By default, meta-cyclonedx will only include run-time packages in the SBOM,
 which drastically reduces the number of potentially irrelevant packages.
 However, this can lead to valid packages being omitted from the SBOM
 (see [here](#potentially-missing-packages-after-runtime-filtering)).
+
 If preferred, you can add the following configuration setting
 (e.g in your local.conf), which will cause meta-cyclonedx to include
 all build-time packages as well:
 
-```
+```sh
 CYCLONEDX_RUNTIME_PACKAGES_ONLY = "0"
+```
+
+### Component Scopes
+
+When including both runtime and build-time packages, meta-cyclonedx uses
+[CycloneDX component scopes](https://cyclonedx.org/docs/1.6/json/#components_items_scope)
+to differentiate between them:
+
+- Runtime packages are marked with `"scope": "required"`
+- Build-time only packages are marked with `"scope": "optional"`
+
+This allows tools to filter components based on their use case:
+
+- **CVE matching**: Focus on components with `"scope": "required"`
+- **License compliance**: Include all components regardless of scope
+- **Supply chain tracking**: Include all components regardless of scope
+
+Component scopes are enabled by default and available in both CycloneDX 1.4 and 1.6
+specifications. If you need to disable them (e.g., for compatibility with certain
+SBOM profiles or tools):
+
+```sh
+CYCLONEDX_ADD_COMPONENT_SCOPES = "0"
+```
+
+### Vulnerability Analysis Timestamps
+
+By default, vulnerability analysis records include `firstIssued` and `lastUpdated`
+timestamps when using CycloneDX 1.6. To generate minimal VEX documents without timestamps:
+
+```sh
+CYCLONEDX_ADD_VULN_TIMESTAMPS = "0"
+```
+
+### Advanced Configuration Summary
+
+```sh
+# Specification version (default: "1.6")
+CYCLONEDX_SPEC_VERSION = "1.6"  # or "1.4"
+
+# Include build-time packages (default: "1" = runtime only)
+CYCLONEDX_RUNTIME_PACKAGES_ONLY = "1"
+
+# Add component scopes (default: "1")
+CYCLONEDX_ADD_COMPONENT_SCOPES = "1"
+
+# Add vulnerability timestamps in 1.6 (default: "1")
+CYCLONEDX_ADD_VULN_TIMESTAMPS = "1"
 ```
 
 ## Usage
