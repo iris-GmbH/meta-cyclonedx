@@ -8,8 +8,6 @@ produces [CycloneDX](https://cyclonedx.org/) Software Bill of Materials
 
 This layer generates **CycloneDX 1.6** compliant SBOMs with the following features:
 
-- Direct integration with DependencyTrack has been removed in favor of generic
-  CycloneDX support.
 - Support for multiple supported Yocto (LTS) releases.
 - Improved package matching against the [NIST NVD](https://nvd.nist.gov/) by
   fixing [CPE](https://nvd.nist.gov/products/cpe) generation process.
