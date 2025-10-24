@@ -18,7 +18,7 @@ This layer generates **CycloneDX 1.6** compliant SBOMs with the following featur
   information on patched and ignored CVEs from within the OpenEmbedded build
   system.
 - Component scopes to differentiate between runtime (`required`) and build-time
-  (`excluded`) dependencies, enabling per-use-case SBOM filtering.
+  (`optional`) dependencies, enabling per-use-case SBOM filtering.
 - Added option to reduce the SBOM size by limiting SBOM collection to run-time
   packages ([which might potentially come at some expense](#potentially-missing-packages-after-runtime-filtering))
 
@@ -33,10 +33,10 @@ directory, check out the corresponding branch for your Yocto release
 and add it to your `build/conf/bblayers.conf` file:
 
 ```sh
-$ cd sources
-$ git clone https://github.com/iris-GmbH/meta-cyclonedx.git
-$ cd meta-cyclonedx
-$ git checkout <YOCTO_RELEASE>
+cd sources
+git clone https://github.com/iris-GmbH/meta-cyclonedx.git
+cd meta-cyclonedx
+git checkout <YOCTO_RELEASE>
 ```
 
 and in your `bblayers.conf` file:
@@ -64,6 +64,7 @@ CYCLONEDX_SPEC_VERSION = "1.4"
 ```
 
 **Version differences:**
+
 - **1.4**: Legacy format for compatibility with older tools
 - **1.6**: Modern format with enhanced metadata and timestamps (default)
 
@@ -89,7 +90,7 @@ When including both runtime and build-time packages, meta-cyclonedx uses
 to differentiate between them:
 
 - Runtime packages are marked with `"scope": "required"`
-- Build-time only packages are marked with `"scope": "excluded"`
+- Build-time only packages are marked with `"scope": "optional"`
 
 This allows tools to filter components based on their use case:
 
@@ -97,16 +98,13 @@ This allows tools to filter components based on their use case:
 - **License compliance**: Include all components regardless of scope
 - **Supply chain tracking**: Include all components regardless of scope
 
-### Component Scopes
-
-Component scopes are enabled by default. If you need to disable them (e.g., for
-compatibility with certain SBOM profiles or tools):
+Component scopes are enabled by default and available in both CycloneDX 1.4 and 1.6
+specifications. If you need to disable them (e.g., for compatibility with certain
+SBOM profiles or tools):
 
 ```sh
 CYCLONEDX_ADD_COMPONENT_SCOPES = "0"
 ```
-
-Component scopes are available in both CycloneDX 1.4 and 1.6 specifications.
 
 ### Vulnerability Analysis Timestamps
 
@@ -123,10 +121,10 @@ CYCLONEDX_ADD_VULN_TIMESTAMPS = "0"
 # Specification version (default: "1.6")
 CYCLONEDX_SPEC_VERSION = "1.6"  # or "1.4"
 
-# Include build-time packages (default: "0" = runtime only)
-CYCLONEDX_RUNTIME_PACKAGES_ONLY = "0"
+# Include build-time packages (default: "1" = runtime only)
+CYCLONEDX_RUNTIME_PACKAGES_ONLY = "1"
 
-# Add component scopes in 1.6 (default: "1")
+# Add component scopes (default: "1")
 CYCLONEDX_ADD_COMPONENT_SCOPES = "1"
 
 # Add vulnerability timestamps in 1.6 (default: "1")
@@ -139,20 +137,15 @@ Different organizations may have specific SBOM profile requirements. The configu
 options above allow you to customize the generated SBOMs to meet various needs:
 
 **If your tools or profiles don't support component scopes:**
+
 ```sh
 CYCLONEDX_ADD_COMPONENT_SCOPES = "0"
 ```
 
 **For legacy tool compatibility:**
+
 ```sh
 CYCLONEDX_SPEC_VERSION = "1.4"
-```
-
-If you need to disable the scope field (e.g., for compatibility with certain
-SBOM profiles or tools that don't support it), you can set:
-
-```sh
-CYCLONEDX_INCLUDE_SCOPE = "0"
 ```
 
 ## Usage
