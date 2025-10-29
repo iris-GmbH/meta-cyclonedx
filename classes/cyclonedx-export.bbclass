@@ -78,9 +78,6 @@ python do_cyclonedx_package_collect() {
     cves = []
     # append all defined package names for recipe to pn_list pkgs
     for pkg in generate_packages_list(name, version):
-        if next((c for c in pn_list["pkgs"] if c["cpe"] == pkg["cpe"]), None):
-            continue
-
         bb.debug(2, f"Resolving license for {pkg['name']}")
         license = resolve_license_data(d)
         if license is not None:
@@ -231,13 +228,13 @@ def resolve_dependency_ref(depends, bom_ref_map, alias_map):
 
     # Direct
     if depends in bom_ref_map:
-        return depends, bom_ref_map[depends]["bom-ref"]
+        return depends, bom_ref_map[depends]["version"], bom_ref_map[depends]["bom-ref"]
 
     # By Alias
     if depends in alias_map:
         real_name = alias_map[depends]
         if real_name in bom_ref_map:
-            return real_name, bom_ref_map[real_name]["bom-ref"]
+            return real_name, bom_ref_map[real_name]["version"], bom_ref_map[real_name]["bom-ref"]
 
     # Return None if no solution found
     return None
@@ -410,12 +407,17 @@ python do_deploy_cyclonedx() {
         pn_list = read_json(pn_list_filepath)
 
         for pn_pkg in pn_list["pkgs"]:
-            # Avoid multiple pkgs referencing the same cpe
+            # Avoid multiple identical components
+            # We need to keep track of the deduplicated refs
+            # for adjusting the dependencies refs later on
+            deduplicated_refs = {}
             for sbom_pkg in sbom["components"]:
-                if pn_pkg["cpe"] == sbom_pkg["cpe"]:
+                if pn_pkg["name"] == sbom_pkg["name"] and pn_pkg["version"] == sbom_pkg["version"]:
                     break
             else:
-            sbom["components"].append(pn_pkg)
+                deduplicated_refs_key = f"{pn_pkg['name']}:{pn_pkg['version']}"
+                deduplicated_refs[deduplicated_refs_key] = pn_pkg["bom-ref"]
+                sbom["components"].append(pn_pkg)
         for pn_cve in pn_list["cves"]:
             pn_cve["affects"][0]["ref"] = pn_cve["affects"][0]["ref"].replace(
                 d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER'), sbom_serial_number)
@@ -432,10 +434,18 @@ python do_deploy_cyclonedx() {
                 for depends in dep_entry["dependsOn"]:
                     resolved = resolve_dependency_ref(depends, bom_ref_map, alias_map)
                     if resolved is not None:
-                        resolved_name, resolved_ref = resolved
+                        resolved_name, resolved_version, resolved_ref = resolved
+                        # avoid "self-referencing", e.g. gcc-runtime recipe depending
+                        # on gcc recipe, but both resolve to the same "gcc" package name
                         if any(pkg["name"] == resolved_name for pkg in pn_list["pkgs"]):
                             continue
-                        if resolved_ref not in resolved_depends:
+
+                        deduplicated_refs_key = f"{resolved_name}:{resolved_version}"
+                        if deduplicated_refs.get(deduplicated_refs_key) != None:
+                            bb.warn(f"setting resolved_ref for {pkg['name']} to {deduplicated_refs[deduplicated_refs_key]}")
+                            resolved_ref = deduplicated_refs[deduplicated_refs_key]
+
+                        if dep_entry["ref"] != resolved_ref and resolved_ref not in resolved_depends:
                             resolved_depends.append(resolved_ref)
 
                             # Add component to isolate file
@@ -443,7 +453,7 @@ python do_deploy_cyclonedx() {
                                 comp = bom_ref_map[alias_map[depends]]
                                 if comp not in pn_list["pkgs"] and comp not in pn_list["dep-pkgs"]:
                                     pn_list["dep-pkgs"].append(comp)
-                if resolved_depends:
+                if resolved_depends and dep_entry["ref"]:
                     updated_entry = {"ref": dep_entry["ref"], "dependsOn": resolved_depends}
                     pn_list["dependencies"].append(updated_entry)
 
