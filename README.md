@@ -1,5 +1,9 @@
 # meta-cyclonedx
 
+> **:warning: Before proceeding to read the documentation, please verify that
+> you are on the correct branch for your Yocto release, as the feature set and
+> default configurations may vary!**
+
 `meta-cyclonedx` is a [Yocto](https://www.yoctoproject.org/) meta-layer which
 produces [CycloneDX](https://cyclonedx.org/) Software Bill of Materials
 (aka [SBOMs](https://www.ntia.gov/SBOM)) from your target root filesystem.
