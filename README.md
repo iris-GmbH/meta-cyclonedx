@@ -22,6 +22,7 @@ This layer generates **CycloneDX** compliant SBOMs with the following features:
   system.
 - Component scopes to differentiate between runtime (`required`) and build-time
   (`optional`) dependencies, enabling per-use-case SBOM filtering.
+- Include component licenses.
 - Added option to reduce the SBOM size by limiting SBOM collection to run-time
   packages ([which might potentially come at some expense](#potentially-missing-packages-after-runtime-filtering))
 
@@ -118,6 +119,35 @@ timestamps when using CycloneDX 1.6. To generate minimal VEX documents without t
 CYCLONEDX_ADD_VULN_TIMESTAMPS = "0"
 ```
 
+### Component Licenses
+
+By default, component licenses are included in the SBOM.
+
+You may choose to exclude license information from your SBOM:
+
+```sh
+CYCLONEDX_ADD_COMPONENT_LICENSES = "0"
+```
+
+The licenses data is taken from the component recipe
+(see [LICENSE](https://docs.yoctoproject.org/singleindex.html#term-LICENSE).
+Single licenses are matched against a list of [known SPDX licenses](/https://github.com/iris-GmbH/meta-cyclonedx/tree/main/meta/files/spdx-license-list-data)
+where possible.
+
+If multiple licenses are specified using `&` or `|`, the license is converted
+into a [SPDX license expression](https://spdx.github.io/spdx-spec/v2.3/SPDX-license-expressions/#).
+
+Additionally, simple expressions (only containing "AND" operators) are split
+into multiple license entries by default, improving the SBOM data quality.
+Note however, that this might not be supported by your SBOM consuming tool of
+choice (e.g. [DependencyTrack](https://github.com/DependencyTrack/dependency-track/issues/170)).
+
+To disable this feature you can set
+
+```sh
+CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS = "0"
+```
+
 ### Advanced Configuration Summary
 
 ```sh
@@ -132,6 +162,13 @@ CYCLONEDX_ADD_COMPONENT_SCOPES = "1"
 
 # Add vulnerability timestamps in 1.6 (default: "1")
 CYCLONEDX_ADD_VULN_TIMESTAMPS = "1"
+
+# Add component licenses (default: "1")
+CYCLONEDX_ADD_COMPONENT_LICENSES = "1"
+
+# split license expressions into multiple license entries
+# when possible (default: "1")
+CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS = "1"
 ```
 
 ## Usage
