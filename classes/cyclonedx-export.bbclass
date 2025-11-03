@@ -28,6 +28,12 @@ CYCLONEDX_ADD_VULN_TIMESTAMPS ??= "1"
 
 CYCLONEDX_RUNTIME_PACKAGES_ONLY ??= "1"
 
+# Add component licenses (as specified within the recipe) to the SBOM
+CYCLONEDX_ADD_COMPONENT_LICENSES ??= "1"
+
+# Optionally, split simple license expressions (only containing "AND") into multiple licenses.
+CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS ??= "1"
+
 CYCLONEDX_EXPORT_DIR ??= "${DEPLOY_DIR}/cyclonedx-export"
 CYCLONEDX_EXPORT_SBOM ??= "${CYCLONEDX_EXPORT_DIR}/bom.json"
 CYCLONEDX_EXPORT_VEX ??= "${CYCLONEDX_EXPORT_DIR}/vex.json"
@@ -104,12 +110,13 @@ python do_cyclonedx_package_collect() {
         if next((c for c in pn_list["pkgs"] if c["cpe"] == pkg["cpe"]), None):
             continue
 
-        bb.debug(2, f"Resolving license for {pkg['name']}")
-        license = resolve_license_data(d)
-        if license is not None:
-            pkg["licenses"] = license
-        else:
-            bb.warn(f"LICENSE variable not set for package {pn}")
+        if d.getVar("CYCLONEDX_ADD_COMPONENT_LICENSES") == "1":
+            bb.debug(2, f"Resolving licenses for {pkg['name']}")
+            licenses = resolve_license_data(d)
+            if len(licenses) != 0:
+                pkg["licenses"] = licenses
+            else:
+                bb.warn(f"LICENSE variable not set for package {pn}")
 
         pn_list["pkgs"].append(pkg)
         bom_ref = pkg["bom-ref"]
@@ -194,6 +201,47 @@ def write_json(path, content):
         json.dumps(content, indent=2)
     )
 
+def convert_to_spdx_license(d, spdx_license_ids):
+    """
+    Converts an OE license (expression) (see: https://docs.yoctoproject.org/singleindex.html#term-LICENSE)
+    to a valid SPDX license (expression) (for the latter see: https://spdx.github.io/spdx-spec/v2.3/SPDX-license-expressions/)
+    """
+
+    oe_license_exp = d.getVar("LICENSE")
+
+    oe_licenses_split = oe_license_exp \
+        .replace("(", " ( ") \
+        .replace(")", " ) ") \
+        .replace("&", " & ") \
+        .replace("|", " | ") \
+        .split()
+
+    for i in range(len(oe_licenses_split)):
+        elem = oe_licenses_split[i]
+        if elem in ["(", ")"]:
+            continue
+        elif elem == "&":
+            oe_licenses_split[i] = " AND "
+        elif elem == "|":
+            oe_licenses_split[i] = " OR "
+        else:
+            elem = d.getVarFlag("SPDXLICENSEMAP", elem) or elem
+            if elem not in spdx_license_ids:
+                elem = f"LicenseRef-{elem}"
+            oe_licenses_split[i] = elem
+
+    return "".join(oe_licenses_split)
+
+def remove_prefix(text, prefix):
+    """
+    If the string starts with the prefix string, return string[len(prefix):].
+    Otherwise, return a copy of the original string.
+    Built-in method only available starting Python 3.9
+    """
+    if text.startswith(prefix):
+        return text[len(prefix):]
+    return text
+
 def resolve_license_data(d):
     """
     Resolves a given recipe LICENSE (see: https://docs.yoctoproject.org/singleindex.html#term-LICENSE)
@@ -202,34 +250,32 @@ def resolve_license_data(d):
     # load spdx license identifiers for the appropriate CycloneDX spec version
     spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
     layerdir = d.getVar("CYCLONEDX_LAYERDIR")
+    pn = d.getVar("PN")
     licenses_file_path = f"{layerdir}/meta/files/spdx-license-list-data/licenses-{spec_version}.json"
     bb.debug(2, f"Loading SPDX licenses from {licenses_file_path}")
     licenses_json = read_json(licenses_file_path)
-    spdx_licenses = [l["licenseId"] for l in licenses_json["licenses"]]
+    spdx_license_ids = [l["licenseId"] for l in licenses_json["licenses"]]
+    split_expressions = d.getVar('CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS')
 
-    license = d.getVar("LICENSE", True)
+    licenses = convert_to_spdx_license(d, spdx_license_ids)
 
-    license_info = None
-    # Check if the license is an expression
-    if "|" in license or "&" in license:
-        bb.debug(2, f"Adding {license} as expression.")
-        license_info = [{"expression": license}]
+    license_info = []
+    # Check if the license is a complex expression
+    if "(" in licenses or ")" in licenses or " OR " in licenses or (split_expressions != "1" and " AND " in licenses):
+        bb.debug(2, f"Adding {licenses} as expression.")
+        license_info.append({"expression": licenses, "acknowledgement": "declared"})
+        return license_info
 
-    # Else if license is a known SPDX license, use license.id
-    elif license in spdx_licenses:
-        bb.debug(2, f"Found license {license} in in SPDX license IDs.")
-        license_info = [{"license": {"id": license}}]
-
-    # Else if there is a matching license mapping and it is a SPDX license ID
-    elif d.getVarFlag("SPDXLICENSEMAP", license) is not None and d.getVarFlag("SPDXLICENSEMAP", license) in spdx_licenses:
-        mapped_license = d.getVarFlag("SPDXLICENSEMAP", license)
-        bb.debug(2, f"Found SPDX ID mapping {mapped_license} for license {license}.")
-        license_info = [{"license": {"id": mapped_license}}]
-
-    # Else add this as license[0].name
-    else:
-        bb.debug(2, f"Unknown license {license}. Using raw name.")
-        license_info = [{"license": {"name": license}}]
+    # otherwise this is a single license entry or consists only of "AND" connections
+    # which we can split this into multiple license entries (if feature enabled)
+    for license in licenses.split(" AND "):
+        if license in spdx_license_ids:
+            bb.debug(2, f"Adding {license} as known SPDX license.")
+            license_info.append({"license": {"id": license, "acknowledgement": "declared"}})
+        else:
+            raw_license = remove_prefix(license, "LicenseRef-")
+            bb.debug(2, f"Unknown license {raw_license}. Using raw name.")
+            license_info.append({"license": {"name": raw_license, "acknowledgement": "declared"}})
 
     return license_info
 
