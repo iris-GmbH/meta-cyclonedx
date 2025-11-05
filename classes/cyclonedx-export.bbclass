@@ -263,7 +263,9 @@ def resolve_license_data(d):
     # Check if the license is a complex expression
     if "(" in licenses or ")" in licenses or " OR " in licenses or (split_expressions != "1" and " AND " in licenses):
         bb.debug(2, f"Adding {licenses} as expression.")
-        license_info.append({"expression": licenses, "acknowledgement": "declared"})
+        license_info.append({"expression": licenses})
+        if spec_version != "1.4":
+            license_info[-1]["acknowledgement"] = "declared"
         return license_info
 
     # otherwise this is a single license entry or consists only of "AND" connections
@@ -271,11 +273,14 @@ def resolve_license_data(d):
     for license in licenses.split(" AND "):
         if license in spdx_license_ids:
             bb.debug(2, f"Adding {license} as known SPDX license.")
-            license_info.append({"license": {"id": license, "acknowledgement": "declared"}})
+            license_info.append({"license": {"id": license}})
         else:
             raw_license = remove_prefix(license, "LicenseRef-")
             bb.debug(2, f"Unknown license {raw_license}. Using raw name.")
-            license_info.append({"license": {"name": raw_license, "acknowledgement": "declared"}})
+            license_info.append({"license": {"name": raw_license}})
+
+        if spec_version != "1.4":
+            license_info[-1]["license"]["acknowledgement"] = "declared"
 
     return license_info
 
