@@ -335,6 +335,11 @@ def resolve_dependency_ref(depends, bom_ref_map, alias_map):
         if real_name in bom_ref_map:
             return bom_ref_map[real_name]["bom-ref"]
 
+    # If depends is already a bom-ref
+    for comp in bom_ref_map.values():
+        if depends == comp["bom-ref"]:
+            return depends
+
     # Return None if no solution found
     return None
 
@@ -552,14 +557,16 @@ python do_deploy_cyclonedx() {
             vex["vulnerabilities"].append(pn_cve)
 
         # Add dependencies
-        if deps := pn_list.get("dependencies"):
+        deps = pn_list.get("dependencies")
+        if deps:
             pn_list["dependencies"] = []
 
             for dep_entry in deps:
                 resolved_depends = []
 
                 for depends in dep_entry["dependsOn"]:
-                    if resolved_ref := resolve_dependency_ref(depends, bom_ref_map, alias_map):
+                    resolved_ref = resolve_dependency_ref(depends, bom_ref_map, alias_map)
+                    if resolved_ref:
                         if resolved_ref not in resolved_depends:
                             resolved_depends.append(resolved_ref)
 
