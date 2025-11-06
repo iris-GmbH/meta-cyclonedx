@@ -511,8 +511,10 @@ python do_deploy_cyclonedx() {
 
     # Create a bom_ref_map for dependencies sanitarization
     # And an alias_map to retrieve real pkg name
+    # And a map to retrieve right bom-ref to the right component
     bom_ref_map = {}
     alias_map = {}
+    unique_bom_ref_comp = {}
 
     # first loop to fill the dictionary
     for pkg in recipes:
@@ -527,7 +529,9 @@ python do_deploy_cyclonedx() {
 
         pn_list = read_json(pn_list_filepath)
         for pn_pkg in pn_list["pkgs"]:
-            bom_ref_map[pn_pkg["name"]]=pn_pkg
+            # Secure overwritting of a componant
+            if (pn_pkg["name"] == d.getVar("PN")) or (pn_pkg["name"] not in bom_ref_map) :
+                bom_ref_map[pn_pkg["name"]]= pn_pkg
             alias_map[d.getVar("PN")]=pn_pkg["name"]
 
     for pkg in recipes:
@@ -542,7 +546,12 @@ python do_deploy_cyclonedx() {
 
         pn_list = read_json(pn_list_filepath)
 
-        for pn_pkg in pn_list["pkgs"]:
+        for i, pn_pkg in enumerate(pn_list["pkgs"]):
+            # Avoid duplication
+            if pn_pkg["name"] in bom_ref_map :
+                if ("group" in pn_pkg) and ("group" in bom_ref_map[pn_pkg["name"]]) and (pn_pkg["group"] == bom_ref_map[pn_pkg["name"]]["group"]):
+                    pn_list["pkgs"][i] = bom_ref_map[pn_pkg["name"]]
+                    unique_bom_ref_comp[pn_pkg["bom-ref"]] = bom_ref_map[pn_pkg["name"]]["bom-ref"]
             # Avoid multiple pkgs referencing the same cpe
             for sbom_pkg in sbom["components"]:
                 if pn_pkg["cpe"] == sbom_pkg["cpe"]:
