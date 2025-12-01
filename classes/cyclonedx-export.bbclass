@@ -105,9 +105,18 @@ python do_cyclonedx_package_collect() {
     pn_list = {}
     pn_list["pkgs"] = []
     cves = []
+    
+    # Track duplicate bom-refs that map to the same CPE
+    # This prevents self-dependencies when multiple packages share the same CPE
+    bom_ref_dedup_map = {}
+    
     # append all defined package names for recipe to pn_list pkgs
     for pkg in generate_packages_list(name, version):
-        if next((c for c in pn_list["pkgs"] if c["cpe"] == pkg["cpe"]), None):
+        # Check if we already have a package with this CPE
+        existing_pkg = next((c for c in pn_list["pkgs"] if c["cpe"] == pkg["cpe"]), None)
+        if existing_pkg:
+            # Map this bom-ref to the existing (canonical) bom-ref
+            bom_ref_dedup_map[pkg["bom-ref"]] = existing_pkg["bom-ref"]
             continue
 
         if d.getVar("CYCLONEDX_ADD_COMPONENT_LICENSES") == "1":
@@ -133,6 +142,9 @@ python do_cyclonedx_package_collect() {
 
     # append any cve status within recipe to pn_list cves
     pn_list["cves"] = cves
+    
+    # Store the deduplication map for use during deployment
+    pn_list["bom_ref_dedup_map"] = bom_ref_dedup_map
 
     # Add dependencies
     dependencies = []
@@ -513,6 +525,8 @@ python do_deploy_cyclonedx() {
     # And an alias_map to retrieve real pkg name
     bom_ref_map = {}
     alias_map = {}
+    # Global deduplication map that tracks all duplicate bom-refs across all recipes
+    global_bom_ref_dedup_map = {}
 
     # first loop to fill the dictionary
     for pkg in recipes:
@@ -526,6 +540,11 @@ python do_deploy_cyclonedx() {
             continue
 
         pn_list = read_json(pn_list_filepath)
+        
+        # Merge recipe-level deduplication map into global map
+        if "bom_ref_dedup_map" in pn_list:
+            global_bom_ref_dedup_map.update(pn_list["bom_ref_dedup_map"])
+        
         for pn_pkg in pn_list["pkgs"]:
             bom_ref_map[pn_pkg["name"]]=pn_pkg
             alias_map[d.getVar("PN")]=pn_pkg["name"]
@@ -568,10 +587,24 @@ python do_deploy_cyclonedx() {
 
             for dep_entry in deps:
                 resolved_depends = []
+                
+                # Resolve the component's own bom-ref in case it was deduplicated
+                component_ref = dep_entry["ref"]
+                if component_ref in global_bom_ref_dedup_map:
+                    component_ref = global_bom_ref_dedup_map[component_ref]
 
                 for depends in dep_entry["dependsOn"]:
                     resolved_ref = resolve_dependency_ref(depends, bom_ref_map, alias_map)
                     if resolved_ref:
+                        # Apply deduplication mapping to resolved reference
+                        if resolved_ref in global_bom_ref_dedup_map:
+                            resolved_ref = global_bom_ref_dedup_map[resolved_ref]
+                        
+                        # Skip self-dependencies (component depending on itself)
+                        if resolved_ref == component_ref:
+                            bb.debug(2, f"Skipping self-dependency: {component_ref} -> {resolved_ref}")
+                            continue
+                        
                         if resolved_ref not in resolved_depends:
                             resolved_depends.append(resolved_ref)
 
@@ -581,7 +614,7 @@ python do_deploy_cyclonedx() {
                                 if comp not in pn_list["pkgs"] :
                                     pn_list["pkgs"].append(comp)
                 if resolved_depends :
-                    updated_entry = {"ref": dep_entry["ref"], "dependsOn": resolved_depends}
+                    updated_entry = {"ref": component_ref, "dependsOn": resolved_depends}
                     pn_list["dependencies"].append(updated_entry)
 
                     if updated_entry not in sbom["dependencies"]:
