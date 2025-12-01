@@ -10,9 +10,10 @@ CVE_PRODUCT ??= "${BPN}"
 CVE_VERSION ??= "${PV}"
 
 # CycloneDX specification version to generate
-# Options: "1.4", "1.6"
+# Options: "1.4", "1.6", "1.7"
 # Version 1.4: Legacy format for compatibility with older tools
 # Version 1.6: Modern format with enhanced features (default)
+# Version 1.7: Latest version with advanced cryptography, IP transparency, and citations
 CYCLONEDX_SPEC_VERSION ??= "1.6"
 
 # Component scope support
@@ -34,6 +35,19 @@ CYCLONEDX_ADD_COMPONENT_LICENSES ??= "1"
 
 # Optionally, split simple license expressions (only containing "AND") into multiple licenses.
 CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS ??= "1"
+
+# Add license expression details for custom licenses (CycloneDX 1.7)
+# When enabled, includes license text for LicenseRef-* identifiers
+CYCLONEDX_ADD_LICENSE_DETAILS ??= "1"
+
+# Add citation for SBOM generator (CycloneDX 1.7)
+# Tracks data provenance - who created the SBOM
+CYCLONEDX_ADD_CITATION ??= "1"
+
+# Set Traffic Light Protocol marking for SBOM distribution (CycloneDX 1.7)
+# Options: "CLEAR", "GREEN", "AMBER", "AMBER_STRICT", "RED", or "" to disable
+# See: https://www.cisa.gov/tlp
+CYCLONEDX_TLP_MARKING ??= ""
 
 CYCLONEDX_EXPORT_DIR ??= "${DEPLOY_DIR}/cyclonedx-export/${PN}"
 CYCLONEDX_EXPORT_DIR ??= "${DEPLOY_DIR}/cyclonedx-export/${IMAGE_BASENAME}"
@@ -72,8 +86,8 @@ python () {
 
     # Validate CycloneDX specification version
     spec_version = d.getVar("CYCLONEDX_SPEC_VERSION")
-    if spec_version not in ["1.4", "1.6"]:
-        bb.fatal(f"Unsupported CYCLONEDX_SPEC_VERSION: {spec_version}. Supported versions: 1.4, 1.6")
+    if spec_version not in ["1.4", "1.6", "1.7"]:
+        bb.fatal(f"Unsupported CYCLONEDX_SPEC_VERSION: {spec_version}. Supported versions: 1.4, 1.6, 1.7")
 }
 
 # Clean out work folder to avoid leftovers from previous builds when including build-time package
@@ -245,6 +259,86 @@ def remove_prefix(text, prefix):
         return text[len(prefix):]
     return text
 
+def get_license_text(d, license_name):
+    """
+    Attempt to read license text from common Yocto locations.
+    Returns license text content or None if not found.
+    """
+    import os
+
+    pn = d.getVar("PN")
+    common_lic_dir = d.getVar('COMMON_LICENSE_DIR')
+
+    # Try common license directory first (e.g., /meta/files/common-licenses/)
+    if common_lic_dir:
+        license_path = os.path.join(common_lic_dir, license_name)
+        if os.path.exists(license_path):
+            try:
+                with open(license_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    # Limit size to avoid huge files
+                    if len(content) > 65535:
+                        content = content[:65535] + "\n... [truncated]"
+                    bb.debug(2, f"Found license text for {license_name} in common licenses")
+                    return content
+            except Exception as e:
+                bb.debug(2, f"Could not read license file {license_path}: {e}")
+
+    # Try to find from LIC_FILES_CHKSUM
+    lic_files = d.getVar('LIC_FILES_CHKSUM') or ""
+    for entry in lic_files.split():
+        if 'file://' in entry:
+            # Extract file path from file://path;md5=...
+            file_part = entry.split(';')[0].replace('file://', '')
+            if license_name.lower() in file_part.lower() or 'license' in file_part.lower() or 'copying' in file_part.lower():
+                s_dir = d.getVar('S')
+                if s_dir:
+                    license_path = os.path.join(s_dir, file_part)
+                    if os.path.exists(license_path):
+                        try:
+                            with open(license_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                content = f.read()
+                                if len(content) > 65535:
+                                    content = content[:65535] + "\n... [truncated]"
+                                bb.debug(2, f"Found license text for {license_name} in {license_path}")
+                                return content
+                        except Exception as e:
+                            bb.debug(2, f"Could not read license file {license_path}: {e}")
+
+    bb.debug(2, f"No license text found for {license_name}")
+    return None
+
+def extract_license_details(d, expression):
+    """
+    Extract license details including text for custom licenses in expression.
+    Returns expressionDetails array for CycloneDX 1.7
+    """
+    import re
+    details = []
+
+    # Find all LicenseRef-* identifiers in the expression
+    custom_licenses = re.findall(r'LicenseRef-[\w.-]+', expression)
+
+    for license_ref in set(custom_licenses):
+        raw_license = license_ref.replace("LicenseRef-", "")
+
+        # Try to get license text from Yocto locations
+        license_text = get_license_text(d, raw_license)
+
+        detail = {
+            "licenseIdentifier": license_ref,
+        }
+
+        if license_text:
+            detail["text"] = {
+                "contentType": "text/plain",
+                "content": license_text
+            }
+
+        details.append(detail)
+
+    return details if details else None
+
 def resolve_license_data(d):
     """
     Resolves a given recipe LICENSE (see: https://docs.yoctoproject.org/singleindex.html#term-LICENSE)
@@ -261,14 +355,24 @@ def resolve_license_data(d):
     split_expressions = d.getVar('CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS')
 
     licenses = convert_to_spdx_license(d, spdx_license_ids)
+    add_license_details = d.getVar('CYCLONEDX_ADD_LICENSE_DETAILS')
 
     license_info = []
     # Check if the license is a complex expression
     if "(" in licenses or ")" in licenses or " OR " in licenses or (split_expressions != "1" and " AND " in licenses):
         bb.debug(2, f"Adding {licenses} as expression.")
-        license_info.append({"expression": licenses})
+        entry = {"expression": licenses}
         if spec_version != "1.4":
-            license_info[-1]["acknowledgement"] = "declared"
+            entry["acknowledgement"] = "declared"
+
+        # Add expressionDetails for CycloneDX 1.7 if enabled
+        if spec_version == "1.7" and add_license_details == "1":
+            details = extract_license_details(d, licenses)
+            if details:
+                entry["expressionDetails"] = details
+                bb.debug(2, f"Added expressionDetails with {len(details)} custom license(s)")
+
+        license_info.append(entry)
         return license_info
 
     # otherwise this is a single license entry or consists only of "AND" connections
@@ -292,7 +396,7 @@ def create_tools_metadata(d):
     Create tools metadata in the format appropriate for the CycloneDX spec version.
 
     Version 1.4: Array format [{"name": "yocto"}]
-    Version 1.6: Object format {"components": [{"type": "application", "name": "yocto", ...}]}
+    Version 1.6+: Object format {"components": [{"type": "application", "name": "yocto", ...}]}
     """
     import uuid
 
@@ -302,7 +406,7 @@ def create_tools_metadata(d):
         # Legacy array format
         return [{"name": "yocto"}]
     else:
-        # Modern object format (1.6)
+        # Modern object format (1.6+)
         return {
             "components": [
                 {
@@ -312,6 +416,53 @@ def create_tools_metadata(d):
                 }
             ]
         }
+
+def create_citations(d):
+    """
+    Create citations array for CycloneDX 1.7 to document SBOM provenance.
+    Citations track the source and generation methodology.
+    """
+    citations = []
+
+    # Add citation for meta-cyclonedx layer as the source
+    citation = {
+        "description": "Generated by meta-cyclonedx layer for Yocto Project"
+    }
+
+    # Add layer repository URL if available
+    layerdir = d.getVar("CYCLONEDX_LAYERDIR")
+    if layerdir:
+        citation["url"] = "https://github.com/iris-GmbH/meta-cyclonedx"
+
+    citations.append(citation)
+
+    return citations
+
+def add_metadata_extensions(d, metadata):
+    """
+    Add optional CycloneDX 1.7+ metadata extensions like citations and TLP marking.
+    Modifies metadata dict in place.
+    """
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
+
+    if spec_version != "1.7":
+        return
+
+    # Add citations if enabled
+    add_citation = d.getVar('CYCLONEDX_ADD_CITATION')
+    if add_citation == "1":
+        citations = create_citations(d)
+        if citations:
+            metadata["citations"] = citations
+            bb.debug(2, "Added citations to SBOM metadata")
+
+    # Add TLP marking if specified
+    tlp_marking = d.getVar('CYCLONEDX_TLP_MARKING')
+    if tlp_marking and tlp_marking in ["CLEAR", "GREEN", "AMBER", "AMBER_STRICT", "RED"]:
+        if "distribution" not in metadata:
+            metadata["distribution"] = {}
+        metadata["distribution"]["tlp"] = tlp_marking
+        bb.debug(2, f"Added TLP marking: {tlp_marking}")
 
 def get_recipe_dependencies(d):
     """
@@ -467,8 +618,7 @@ def append_to_vex(d, cve, cves, bom_ref):
     # This provides better tracking of when vulnerabilities were identified and updated
     spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
     add_timestamps = d.getVar('CYCLONEDX_ADD_VULN_TIMESTAMPS') == "1"
-
-    if spec_version == "1.6" and add_timestamps:
+    if spec_version in ["1.6", "1.7"] and add_timestamps:
         timestamp = datetime.now(timezone.utc).isoformat()
         analysis["firstIssued"] = timestamp
         analysis["lastUpdated"] = timestamp
@@ -506,30 +656,36 @@ python do_deploy_cyclonedx() {
 
     # Generate sbom document header
     bb.debug(2, f"Creating empty temporary sbom file with serial number {sbom_serial_number}")
+    sbom_metadata = {
+        "timestamp": timestamp,
+        "tools": create_tools_metadata(d)
+    }
+    add_metadata_extensions(d, sbom_metadata)
+
     sbom = {
         "bomFormat": "CycloneDX",
         "specVersion": spec_version,
         "serialNumber": f"urn:uuid:{sbom_serial_number}",
         "version": 1,
-        "metadata": {
-            "timestamp": timestamp,
-            "tools": create_tools_metadata(d)
-        },
+        "metadata": sbom_metadata,
         "components": [],
         "dependencies": []
     }
 
     # Generate vex document header
     bb.debug(2, f"Creating empty temporary vex file with serial number {sbom_serial_number}")
+    vex_metadata = {
+        "timestamp": timestamp,
+        "tools": create_tools_metadata(d)
+    }
+    add_metadata_extensions(d, vex_metadata)
+
     vex = {
         "bomFormat": "CycloneDX",
         "specVersion": spec_version,
         "serialNumber": f"urn:uuid:{vex_serial_number}",
         "version": 1,
-        "metadata": {
-            "timestamp": timestamp,
-            "tools": create_tools_metadata(d)
-        },
+        "metadata": vex_metadata,
         "vulnerabilities": []
     }
 
