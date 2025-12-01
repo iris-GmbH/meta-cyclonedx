@@ -12,7 +12,7 @@ produces [CycloneDX](https://cyclonedx.org/) Software Bill of Materials
 
 This layer generates **CycloneDX** compliant SBOMs with the following features:
 
-- Currently, support for CycloneDX specification 1.6 and 1.4
+- Currently, support for CycloneDX specification 1.7, 1.6, and 1.4
 - Support for multiple supported Yocto (LTS) releases.
 - Improved package matching against the [NIST NVD](https://nvd.nist.gov/) by
   fixing [CPE](https://nvd.nist.gov/products/cpe) generation process.
@@ -60,17 +60,21 @@ INHERIT += "cyclonedx-export"
 
 ### CycloneDX Specification Version
 
-By default, meta-cyclonedx generates **CycloneDX 1.6** format SBOMs. If you need
-compatibility with tools that only support CycloneDX 1.4, you can configure:
+By default, meta-cyclonedx generates **CycloneDX 1.6** format SBOMs. You can configure a different version if needed:
 
 ```sh
-CYCLONEDX_SPEC_VERSION = "1.4"
+CYCLONEDX_SPEC_VERSION = "1.6"  # Default - modern format
+# Or for newer features:
+# CYCLONEDX_SPEC_VERSION = "1.7"
+# Or for legacy tools:
+# CYCLONEDX_SPEC_VERSION = "1.4"
 ```
 
 **Version differences:**
 
 - **1.4**: Legacy format for compatibility with older tools
 - **1.6**: Modern format with enhanced metadata and timestamps (default)
+- **1.7**: Latest version with advanced cryptography transparency (CBOM), intellectual property visibility, citations, and improved custom license handling
 
 ### Runtime vs Build-time Packages
 
@@ -152,7 +156,7 @@ CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS = "0"
 
 ```sh
 # Specification version (default: "1.6")
-CYCLONEDX_SPEC_VERSION = "1.6"  # or "1.4"
+CYCLONEDX_SPEC_VERSION = "1.6"  # or "1.7" or "1.4"
 
 # Include build-time packages (default: "1" = runtime only)
 CYCLONEDX_RUNTIME_PACKAGES_ONLY = "1"
@@ -160,7 +164,7 @@ CYCLONEDX_RUNTIME_PACKAGES_ONLY = "1"
 # Add component scopes (default: "1")
 CYCLONEDX_ADD_COMPONENT_SCOPES = "1"
 
-# Add vulnerability timestamps in 1.6 (default: "1")
+# Add vulnerability timestamps in 1.6+ (default: "1")
 CYCLONEDX_ADD_VULN_TIMESTAMPS = "1"
 
 # Add component licenses (default: "1")

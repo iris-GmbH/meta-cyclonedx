@@ -10,9 +10,10 @@ CVE_PRODUCT ??= "${BPN}"
 CVE_VERSION ??= "${PV}"
 
 # CycloneDX specification version to generate
-# Options: "1.4", "1.6"
+# Options: "1.4", "1.6", "1.7"
 # Version 1.4: Legacy format for compatibility with older tools
 # Version 1.6: Modern format with enhanced features (default)
+# Version 1.7: Latest version with advanced cryptography, IP transparency, and citations
 CYCLONEDX_SPEC_VERSION ??= "1.6"
 
 # Component scope support
@@ -71,8 +72,8 @@ python () {
 
     # Validate CycloneDX specification version
     spec_version = d.getVar("CYCLONEDX_SPEC_VERSION")
-    if spec_version not in ["1.4", "1.6"]:
-        bb.fatal(f"Unsupported CYCLONEDX_SPEC_VERSION: {spec_version}. Supported versions: 1.4, 1.6")
+    if spec_version not in ["1.4", "1.6", "1.7"]:
+        bb.fatal(f"Unsupported CYCLONEDX_SPEC_VERSION: {spec_version}. Supported versions: 1.4, 1.6, 1.7")
 }
 
 # Clean out work folder to avoid leftovers from previous builds when including build-time package
@@ -279,7 +280,7 @@ def create_tools_metadata(d):
     Create tools metadata in the format appropriate for the CycloneDX spec version.
     
     Version 1.4: Array format [{"name": "yocto"}]
-    Version 1.6: Object format {"components": [{"type": "application", "name": "yocto", ...}]}
+    Version 1.6+: Object format {"components": [{"type": "application", "name": "yocto", ...}]}
     """
     import uuid
     
@@ -289,7 +290,7 @@ def create_tools_metadata(d):
         # Legacy array format
         return [{"name": "yocto"}]
     else:
-        # Modern object format (1.6)
+        # Modern object format (1.6+)
         return {
             "components": [
                 {
@@ -423,7 +424,7 @@ def append_to_vex(d, cve, cves, bom_ref):
     spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
     add_timestamps = d.getVar('CYCLONEDX_ADD_VULN_TIMESTAMPS') == "1"
     
-    if spec_version == "1.6" and add_timestamps:
+    if spec_version in ["1.6", "1.7"] and add_timestamps:
         timestamp = datetime.now(timezone.utc).isoformat()
         analysis["firstIssued"] = timestamp
         analysis["lastUpdated"] = timestamp
