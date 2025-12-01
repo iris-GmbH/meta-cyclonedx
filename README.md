@@ -197,6 +197,24 @@ TLP markings control how the SBOM can be shared:
 
 Leave empty (default) to omit TLP marking.
 
+#### Unsupported Advanced Features
+
+The following CycloneDX 1.7 features are **not currently supported** due to the high implementation complexity and lack of native Yocto support:
+
+**Cryptography Bill of Materials (CBOM)**
+- Documents cryptographic algorithms, certificates, keys, and protocols
+- Use case: Post-quantum cryptography (PQC) readiness and compliance
+- Why unsupported: Requires binary analysis tools to detect crypto usage in compiled packages. Yocto does not natively track cryptographic algorithms used by components.
+- Manual workaround: Use the `properties` field to add custom crypto metadata if needed
+
+**Patent Assertions**
+- Documents patent ownership, licensing, and defensive termination clauses
+- Use case: IP due diligence, M&A activities, patent litigation defense
+- Why unsupported: Requires manual legal research and patent database maintenance per package. Open source recipes do not include patent information.
+- Manual workaround: Use the `properties` field or external SBOM enrichment tools
+
+If you have specific requirements for these features, consider using external SBOM enrichment tools after generation or contributing implementations that integrate with specialized crypto scanners.
+
 ### Advanced Configuration Summary
 
 ```sh
