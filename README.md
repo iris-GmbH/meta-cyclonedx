@@ -152,6 +152,51 @@ To disable this feature you can set
 CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS = "0"
 ```
 
+### CycloneDX 1.7 Optional Features
+
+When using CycloneDX 1.7, you can enable additional optional features for enhanced SBOM quality:
+
+#### License Expression Details
+
+For custom or proprietary licenses (appearing as `LicenseRef-*` in expressions), you can include the actual license text in the SBOM:
+
+```sh
+CYCLONEDX_ADD_LICENSE_DETAILS = "1"  # default: enabled for 1.7
+```
+
+This feature extracts license text from:
+- Yocto's `COMMON_LICENSE_DIR` (e.g., `/meta/files/common-licenses/`)
+- Package-specific license files referenced in `LIC_FILES_CHKSUM`
+
+The license text is embedded in the SBOM's `expressionDetails` field, enabling SBOM consumers to view the full license content without external lookups.
+
+#### Citations
+
+Citations document the SBOM's provenance and generation methodology:
+
+```sh
+CYCLONEDX_ADD_CITATION = "1"  # default: enabled for 1.7
+```
+
+This adds metadata tracking the source of the SBOM (meta-cyclonedx layer) and enables supply chain transparency.
+
+#### Traffic Light Protocol (TLP) Marking
+
+For enterprise environments, you can mark SBOMs with TLP distribution restrictions:
+
+```sh
+CYCLONEDX_TLP_MARKING = "GREEN"  # options: CLEAR, GREEN, AMBER, AMBER_STRICT, RED
+```
+
+TLP markings control how the SBOM can be shared:
+- `CLEAR`: Unlimited distribution
+- `GREEN`: Community-wide distribution
+- `AMBER`: Limited distribution to organizations
+- `AMBER_STRICT`: Limited distribution to specified recipients only
+- `RED`: Personal for named recipients only
+
+Leave empty (default) to omit TLP marking.
+
 ### Advanced Configuration Summary
 
 ```sh
@@ -173,6 +218,11 @@ CYCLONEDX_ADD_COMPONENT_LICENSES = "1"
 # split license expressions into multiple license entries
 # when possible (default: "1")
 CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS = "1"
+
+# CycloneDX 1.7 optional features
+CYCLONEDX_ADD_LICENSE_DETAILS = "1"  # Include license text for custom licenses
+CYCLONEDX_ADD_CITATION = "1"         # Document SBOM provenance
+CYCLONEDX_TLP_MARKING = ""           # TLP marking (CLEAR|GREEN|AMBER|AMBER_STRICT|RED)
 ```
 
 ## Usage
