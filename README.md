@@ -148,6 +148,62 @@ To disable this feature you can set
 CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS = "0"
 ```
 
+### Minimal SBOM Configuration
+
+Meta-cyclonedx supports generating a **minimal SBOM** that includes only the essential information required by the CycloneDX specification. This is useful for:
+
+- Reducing SBOM file size
+- Compliance with minimal SBOM requirements
+- Fast SBOM generation
+- Environments with strict data minimization policies
+
+#### What's Included in a Minimal SBOM
+
+The minimal SBOM always contains:
+
+**Component Information:**
+
+- `name` - Component name
+- `version` - Component version
+- `type` - Component type (typically "library")
+- `bom-ref` - Unique reference identifier
+
+**Identifiers:**
+
+- `cpe` - Common Platform Enumeration for vulnerability matching
+- `purl` - Package URL for package identification
+
+**Relationships:**
+
+- `dependencies` - Component dependency graph
+
+**Metadata:**
+
+- `bomFormat`, `specVersion`, `serialNumber`, `version`
+- `timestamp` - SBOM generation time
+- `tools` - SBOM generation tool information
+
+**VEX (Vulnerability Exploitability Exchange):**
+
+- `vulnerabilities` - CVE status information (patched/ignored)
+
+#### Minimal Configuration Example
+
+To generate a minimal SBOM, disable all optional features:
+
+```sh
+INHERIT += "cyclonedx-export"
+
+# Use minimal configuration
+CYCLONEDX_SPEC_VERSION = "1.6"           # or "1.4"
+CYCLONEDX_RUNTIME_PACKAGES_ONLY = "1"    # Runtime packages only
+CYCLONEDX_ADD_COMPONENT_SCOPES = "0"     # Disable scope marking
+CYCLONEDX_ADD_VULN_TIMESTAMPS = "0"      # Disable VEX timestamps
+CYCLONEDX_ADD_COMPONENT_LICENSES = "0"   # Exclude licenses
+```
+
+This produces the smallest valid CycloneDX SBOM with only essential vulnerability and package information.
+
 ### Advanced Configuration Summary
 
 ```sh
