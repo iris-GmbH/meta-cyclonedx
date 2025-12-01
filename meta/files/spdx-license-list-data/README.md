@@ -9,4 +9,5 @@ the license list data version must align with the CycloneDX spec version.
 
 - **CycloneDX 1.4** uses [SPDX License List v3.12](https://github.com/CycloneDX/specification/blob/1.4/schema/spdx.schema.json#L4) → `licenses-1.4.json`
 - **CycloneDX 1.6** uses [SPDX License List v3.23](https://github.com/CycloneDX/specification/blob/1.6/schema/spdx.schema.json#L4) → `licenses-1.6.json`
+- **CycloneDX 1.7** uses [SPDX License List v3.27](https://github.com/CycloneDX/specification/blob/1.7/schema/spdx.schema.json#L4) → `licenses-1.7.json`
 
