@@ -165,6 +165,7 @@ CYCLONEDX_ADD_LICENSE_DETAILS = "1"  # default: enabled for 1.7
 ```
 
 This feature extracts license text from:
+
 - Yocto's `COMMON_LICENSE_DIR` (e.g., `/meta/files/common-licenses/`)
 - Package-specific license files referenced in `LIC_FILES_CHKSUM`
 
@@ -189,6 +190,7 @@ CYCLONEDX_TLP_MARKING = "GREEN"  # options: CLEAR, GREEN, AMBER, AMBER_STRICT, R
 ```
 
 TLP markings control how the SBOM can be shared:
+
 - `CLEAR`: Unlimited distribution
 - `GREEN`: Community-wide distribution
 - `AMBER`: Limited distribution to organizations
@@ -202,18 +204,76 @@ Leave empty (default) to omit TLP marking.
 The following CycloneDX 1.7 features are **not currently supported** due to the high implementation complexity and lack of native Yocto support:
 
 **Cryptography Bill of Materials (CBOM)**
+
 - Documents cryptographic algorithms, certificates, keys, and protocols
 - Use case: Post-quantum cryptography (PQC) readiness and compliance
 - Why unsupported: Requires binary analysis tools to detect crypto usage in compiled packages. Yocto does not natively track cryptographic algorithms used by components.
 - Manual workaround: Use the `properties` field to add custom crypto metadata if needed
 
 **Patent Assertions**
+
 - Documents patent ownership, licensing, and defensive termination clauses
 - Use case: IP due diligence, M&A activities, patent litigation defense
 - Why unsupported: Requires manual legal research and patent database maintenance per package. Open source recipes do not include patent information.
 - Manual workaround: Use the `properties` field or external SBOM enrichment tools
 
 If you have specific requirements for these features, consider using external SBOM enrichment tools after generation or contributing implementations that integrate with specialized crypto scanners.
+
+### Minimal SBOM Configuration
+
+Meta-cyclonedx supports generating a **minimal SBOM** that includes only the essential information required by the CycloneDX specification. This is useful for:
+
+- Reducing SBOM file size
+- Compliance with minimal SBOM requirements
+- Fast SBOM generation
+- Environments with strict data minimization policies
+
+#### What's Included in a Minimal SBOM
+
+The minimal SBOM always contains:
+
+**Component Information:**
+
+- `name` - Component name
+- `version` - Component version
+- `type` - Component type (typically "library")
+- `bom-ref` - Unique reference identifier
+
+**Identifiers:**
+
+- `cpe` - Common Platform Enumeration for vulnerability matching
+- `purl` - Package URL for package identification
+
+**Relationships:**
+
+- `dependencies` - Component dependency graph
+
+**Metadata:**
+
+- `bomFormat`, `specVersion`, `serialNumber`, `version`
+- `timestamp` - SBOM generation time
+- `tools` - SBOM generation tool information
+
+**VEX (Vulnerability Exploitability Exchange):**
+
+- `vulnerabilities` - CVE status information (patched/ignored)
+
+#### Minimal Configuration Example
+
+To generate a minimal SBOM, disable all optional features:
+
+```sh
+INHERIT += "cyclonedx-export"
+
+# Use minimal configuration
+CYCLONEDX_SPEC_VERSION = "1.6"           # or "1.4"
+CYCLONEDX_RUNTIME_PACKAGES_ONLY = "1"    # Runtime packages only
+CYCLONEDX_ADD_COMPONENT_SCOPES = "0"     # Disable scope marking
+CYCLONEDX_ADD_VULN_TIMESTAMPS = "0"      # Disable VEX timestamps
+CYCLONEDX_ADD_COMPONENT_LICENSES = "0"   # Exclude licenses
+```
+
+This produces the smallest valid CycloneDX SBOM with only essential vulnerability and package information.
 
 ### Advanced Configuration Summary
 
