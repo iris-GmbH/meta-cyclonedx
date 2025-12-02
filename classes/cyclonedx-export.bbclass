@@ -373,6 +373,23 @@ def generate_packages_list(products_names, version):
         packages.append(pkg)
     return packages
 
+def normalize_cve_id(cve_id):
+    """
+    Normalize CVE ID by removing patch file suffixes.
+    
+    Yocto recipes often use multiple patches for the same CVE with suffixes like:
+    - CVE-2025-52886-0001.patch
+    - CVE-2025-52886-0002.patch
+    
+    This function strips the numeric suffix to get the canonical CVE ID.
+    """
+    import re
+    # Match CVE-YYYY-NNNNN format, optionally followed by -NNNN suffix
+    match = re.match(r'(CVE-\d{4}-\d+)(?:-\d+)?', cve_id)
+    if match:
+        return match.group(1)
+    return cve_id
+
 def append_to_vex(d, cve, cves, bom_ref):
     """
     Collect CVE status information from within open embedded recipes and append to add to cve dictionary.
@@ -381,21 +398,36 @@ def append_to_vex(d, cve, cves, bom_ref):
     from datetime import datetime, timezone
     
     cve_id, abbrev_status, status, justification = cve
+    
+    # Normalize CVE ID to remove patch file suffixes (e.g., CVE-2025-52886-0001 -> CVE-2025-52886)
+    normalized_cve_id = normalize_cve_id(cve_id)
 
     if abbrev_status == "Patched":
-        bb.debug(2, f"Found patch for {cve_id} in {d.getVar('BPN')}")
+        bb.debug(2, f"Found patch for {normalized_cve_id} in {d.getVar('BPN')}")
         vex_state = "resolved"
     elif abbrev_status == "Ignored":
-        bb.debug(2, f"Found ignore statement for {cve_id} in {d.getVar('BPN')}")
+        bb.debug(2, f"Found ignore statement for {normalized_cve_id} in {d.getVar('BPN')}")
         vex_state = "not_affected"
     else:
-        bb.debug(2, f"Found unknown or irrelevant CVE status {abbrev_status} for {cve_id} in {d.getVar('BPN')}. Skipping...")
+        bb.debug(2, f"Found unknown or irrelevant CVE status {abbrev_status} for {normalized_cve_id} in {d.getVar('BPN')}. Skipping...")
         return
+
+    # Check if this CVE already exists in the list (avoid duplicates from multiple patches)
+    for existing_cve in cves:
+        if existing_cve["id"] == normalized_cve_id:
+            # CVE already recorded, just update the detail to mention this patch too
+            if cve_id != normalized_cve_id:  # Only if there was a suffix
+                existing_cve["analysis"]["detail"] += f"Additional patch: {cve_id}\n"
+            bb.debug(2, f"CVE {normalized_cve_id} already recorded, updated details")
+            return
 
     detail_string = ""
     detail_string += f"STATE: {status}\n"
     if justification:
         detail_string += f"JUSTIFICATION: {justification}\n"
+    # Mention original patch filename if it had a suffix
+    if cve_id != normalized_cve_id:
+        detail_string += f"Patch file: {cve_id}\n"
 
     # Build analysis object
     analysis = {
@@ -414,10 +446,10 @@ def append_to_vex(d, cve, cves, bom_ref):
         analysis["lastUpdated"] = timestamp
 
     cves.append({
-        "id": cve_id,
+        "id": normalized_cve_id,
         # vex documents require a valid source, see https://github.com/DependencyTrack/dependency-track/issues/2977
         # this should always be NVD for yocto CVEs.
-        "source": {"name": "NVD", "url": f"https://nvd.nist.gov/vuln/detail/{cve_id}"},
+        "source": {"name": "NVD", "url": f"https://nvd.nist.gov/vuln/detail/{normalized_cve_id}"},
         "analysis": analysis,
         "affects": [{"ref": f"urn:cdx:{d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER')}/1#{bom_ref}"}]
     })
