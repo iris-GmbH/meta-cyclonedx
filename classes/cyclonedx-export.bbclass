@@ -574,8 +574,8 @@ python do_deploy_cyclonedx() {
                         pn_pkg["scope"] = "optional"
                 sbom["components"].append(pn_pkg)
         for pn_cve in pn_list["cves"]:
-            pn_cve["affects"][0]["ref"] = pn_cve["affects"][0]["ref"].replace(
-                d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER'), sbom_serial_number)
+            # Don't replace serial number yet - it will be done after all CVEs are collected
+            # This fixes multi-output builds where shared components would get the wrong serial
             vex["vulnerabilities"].append(pn_cve)
 
         # Add dependencies
@@ -607,6 +607,15 @@ python do_deploy_cyclonedx() {
             write_json(pn_list_filepath, pn_list)
 
     d.setVar("PN", save_pn)
+
+    # Replace SBOM serial placeholder in VEX vulnerabilities
+    # This must be done after all vulnerabilities are collected to ensure each image
+    # gets its own SBOM serial number in multi-output builds (e.g., rootfs + initramfs)
+    for vuln in vex["vulnerabilities"]:
+        for affect in vuln.get("affects", []):
+            if "ref" in affect:
+                affect["ref"] = affect["ref"].replace(
+                    d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER'), sbom_serial_number)
 
     write_json(d.getVar("CYCLONEDX_EXPORT_SBOM"), sbom)
     write_json(d.getVar("CYCLONEDX_EXPORT_VEX"), vex)
