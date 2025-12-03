@@ -191,6 +191,13 @@ def write_json(path, content):
         json.dumps(content, indent=2)
     )
 
+def write_json_replace(path, content, old, new):
+    import json
+    from pathlib import Path
+    Path(path).write_text(
+        json.dumps(content, indent=2).replace(old, new)
+    )
+
 def convert_to_spdx_license(d, spdx_license_ids):
     """
     Converts an OE license (expression) (see: https://docs.yoctoproject.org/singleindex.html#term-LICENSE)
@@ -589,8 +596,6 @@ python do_deploy_cyclonedx() {
                         pn_pkg["scope"] = "optional"
                 sbom["components"].append(pn_pkg)
         for pn_cve in pn_list["cves"]:
-            pn_cve["affects"][0]["ref"] = pn_cve["affects"][0]["ref"].replace(
-                d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER'), sbom_serial_number)
             vex["vulnerabilities"].append(pn_cve)
 
         # Add dependencies
@@ -624,7 +629,7 @@ python do_deploy_cyclonedx() {
     d.setVar("PN", save_pn)
 
     write_json(d.getVar("CYCLONEDX_EXPORT_SBOM"), sbom)
-    write_json(d.getVar("CYCLONEDX_EXPORT_VEX"), vex)
+    write_json_replace(d.getVar("CYCLONEDX_EXPORT_VEX"), vex, d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER'), sbom_serial_number)
 }
 do_deploy_cyclonedx[cleandirs] = "${CYCLONEDX_EXPORT_DIR}"
 
