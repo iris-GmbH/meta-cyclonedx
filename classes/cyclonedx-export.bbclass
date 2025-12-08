@@ -592,6 +592,13 @@ python do_deploy_cyclonedx() {
                 component_ref = dep_entry["ref"]
                 if component_ref in global_bom_ref_dedup_map:
                     component_ref = global_bom_ref_dedup_map[component_ref]
+                
+                # Verify that the component exists in the SBOM
+                # If it was filtered out by CPE deduplication, skip this dependency entry
+                component_exists = any(comp["bom-ref"] == component_ref for comp in sbom["components"])
+                if not component_exists:
+                    bb.debug(2, f"Skipping dependency entry for non-existent component: {component_ref}")
+                    continue
 
                 for depends in dep_entry["dependsOn"]:
                     resolved_ref = resolve_dependency_ref(depends, bom_ref_map, alias_map)
@@ -603,6 +610,13 @@ python do_deploy_cyclonedx() {
                         # Skip self-dependencies (component depending on itself)
                         if resolved_ref == component_ref:
                             bb.debug(2, f"Skipping self-dependency: {component_ref} -> {resolved_ref}")
+                            continue
+                        
+                        # Verify that the dependency target exists in the SBOM
+                        # If it was filtered out by CPE deduplication, skip this dependency
+                        dep_exists = any(comp["bom-ref"] == resolved_ref for comp in sbom["components"])
+                        if not dep_exists:
+                            bb.debug(2, f"Skipping dependency to non-existent component: {component_ref} -> {resolved_ref}")
                             continue
                         
                         if resolved_ref not in resolved_depends:
