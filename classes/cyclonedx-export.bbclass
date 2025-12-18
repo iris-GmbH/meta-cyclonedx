@@ -130,9 +130,14 @@ python do_cyclonedx_package_collect() {
                 ""
             )
             append_to_vex(d, cve, cves, bom_ref)
-        # append any cve status within recipe to pn_list cves
+
+        # in scarthgap the get_patched_cves function filters CVE_STATUS to only
+        # include "Patched" decoded status, however we want "Ignored" statuses as well.
         for cve_id in (d.getVarFlags("CVE_STATUS") or {}):
             decoded_status, state, justification = decode_cve_status(d, cve_id)
+            # avoid duplicates
+            if decoded_status == "Patched":
+                continue
             cve = (
                 cve_id,
                 decoded_status,
