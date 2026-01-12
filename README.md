@@ -12,7 +12,7 @@ produces [CycloneDX](https://cyclonedx.org/) Software Bill of Materials
 
 This layer generates **CycloneDX** compliant SBOMs with the following features:
 
-- Currently, support for CycloneDX specification 1.6 and 1.4
+- Currently, support for CycloneDX specification 1.7, 1.6, and 1.4
 - Support for multiple supported Yocto (LTS) releases.
 - Improved package matching against the [NIST NVD](https://nvd.nist.gov/) by
   fixing [CPE](https://nvd.nist.gov/products/cpe) generation process.
@@ -60,17 +60,21 @@ INHERIT += "cyclonedx-export"
 
 ### CycloneDX Specification Version
 
-By default, meta-cyclonedx generates **CycloneDX 1.6** format SBOMs. If you need
-compatibility with tools that only support CycloneDX 1.4, you can configure:
+By default, meta-cyclonedx generates **CycloneDX 1.6** format SBOMs. You can configure a different version if needed:
 
 ```sh
-CYCLONEDX_SPEC_VERSION = "1.4"
+CYCLONEDX_SPEC_VERSION = "1.6"  # Default - modern format
+# Or for newer features:
+# CYCLONEDX_SPEC_VERSION = "1.7"
+# Or for legacy tools:
+# CYCLONEDX_SPEC_VERSION = "1.4"
 ```
 
 **Version differences:**
 
 - **1.4**: Legacy format for compatibility with older tools
 - **1.6**: Modern format with enhanced metadata and timestamps (default)
+- **1.7**: Latest version with advanced cryptography transparency (CBOM), intellectual property visibility, citations, and improved custom license handling
 
 ### Runtime vs Build-time Packages
 
@@ -148,11 +152,74 @@ To disable this feature you can set
 CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS = "0"
 ```
 
+### CycloneDX 1.7 Optional Features
+
+When using CycloneDX 1.7, you can enable additional optional features for enhanced SBOM quality:
+
+#### License Expression Details
+
+For custom or proprietary licenses (appearing as `LicenseRef-*` in expressions), you can include the actual license text in the SBOM:
+
+```sh
+CYCLONEDX_ADD_LICENSE_DETAILS = "1"  # default: enabled for 1.7
+```
+
+This feature extracts license text from:
+- Yocto's `COMMON_LICENSE_DIR` (e.g., `/meta/files/common-licenses/`)
+- Package-specific license files referenced in `LIC_FILES_CHKSUM`
+
+The license text is embedded in the SBOM's `expressionDetails` field, enabling SBOM consumers to view the full license content without external lookups.
+
+#### Citations
+
+Citations document the SBOM's provenance and generation methodology:
+
+```sh
+CYCLONEDX_ADD_CITATION = "1"  # default: enabled for 1.7
+```
+
+This adds metadata tracking the source of the SBOM (meta-cyclonedx layer) and enables supply chain transparency.
+
+#### Traffic Light Protocol (TLP) Marking
+
+For enterprise environments, you can mark SBOMs with TLP distribution restrictions:
+
+```sh
+CYCLONEDX_TLP_MARKING = "GREEN"  # options: CLEAR, GREEN, AMBER, AMBER_STRICT, RED
+```
+
+TLP markings control how the SBOM can be shared:
+- `CLEAR`: Unlimited distribution
+- `GREEN`: Community-wide distribution
+- `AMBER`: Limited distribution to organizations
+- `AMBER_STRICT`: Limited distribution to specified recipients only
+- `RED`: Personal for named recipients only
+
+Leave empty (default) to omit TLP marking.
+
+#### Unsupported Advanced Features
+
+The following CycloneDX 1.7 features are **not currently supported** due to the high implementation complexity and lack of native Yocto support:
+
+**Cryptography Bill of Materials (CBOM)**
+- Documents cryptographic algorithms, certificates, keys, and protocols
+- Use case: Post-quantum cryptography (PQC) readiness and compliance
+- Why unsupported: Requires binary analysis tools to detect crypto usage in compiled packages. Yocto does not natively track cryptographic algorithms used by components.
+- Manual workaround: Use the `properties` field to add custom crypto metadata if needed
+
+**Patent Assertions**
+- Documents patent ownership, licensing, and defensive termination clauses
+- Use case: IP due diligence, M&A activities, patent litigation defense
+- Why unsupported: Requires manual legal research and patent database maintenance per package. Open source recipes do not include patent information.
+- Manual workaround: Use the `properties` field or external SBOM enrichment tools
+
+If you have specific requirements for these features, consider using external SBOM enrichment tools after generation or contributing implementations that integrate with specialized crypto scanners.
+
 ### Advanced Configuration Summary
 
 ```sh
 # Specification version (default: "1.6")
-CYCLONEDX_SPEC_VERSION = "1.6"  # or "1.4"
+CYCLONEDX_SPEC_VERSION = "1.6"  # or "1.7" or "1.4"
 
 # Include build-time packages (default: "1" = runtime only)
 CYCLONEDX_RUNTIME_PACKAGES_ONLY = "1"
@@ -160,7 +227,7 @@ CYCLONEDX_RUNTIME_PACKAGES_ONLY = "1"
 # Add component scopes (default: "1")
 CYCLONEDX_ADD_COMPONENT_SCOPES = "1"
 
-# Add vulnerability timestamps in 1.6 (default: "1")
+# Add vulnerability timestamps in 1.6+ (default: "1")
 CYCLONEDX_ADD_VULN_TIMESTAMPS = "1"
 
 # Add component licenses (default: "1")
@@ -169,6 +236,11 @@ CYCLONEDX_ADD_COMPONENT_LICENSES = "1"
 # split license expressions into multiple license entries
 # when possible (default: "1")
 CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS = "1"
+
+# CycloneDX 1.7 optional features
+CYCLONEDX_ADD_LICENSE_DETAILS = "1"  # Include license text for custom licenses
+CYCLONEDX_ADD_CITATION = "1"         # Document SBOM provenance
+CYCLONEDX_TLP_MARKING = ""           # TLP marking (CLEAR|GREEN|AMBER|AMBER_STRICT|RED)
 ```
 
 ## Usage
