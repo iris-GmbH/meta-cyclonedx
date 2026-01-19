@@ -111,7 +111,7 @@ python do_cyclonedx_package_collect() {
     bom_ref_dedup_map = {}
     
     # append all defined package names for recipe to pn_list pkgs
-    for pkg in generate_packages_list(name, version):
+    for pkg in generate_packages_list(d, name, version):
         # Check if we already have a package with this CPE
         existing_pkg = next((c for c in pn_list["pkgs"] if c["cpe"] == pkg["cpe"]), None)
         if existing_pkg:
@@ -360,11 +360,12 @@ def resolve_dependency_ref(depends, bom_ref_map, alias_map):
     # Return None if no solution found
     return None
 
-def generate_packages_list(products_names, version):
+def generate_packages_list(d, products_names, version):
     """
     Get a list of products and generate CPE and PURL identifiers for each of them.
     """
     import uuid
+    from oe.purl import get_base_purl
 
     packages = []
 
@@ -390,7 +391,7 @@ def generate_packages_list(products_names, version):
             "version": version,
             "type": "library",
             "cpe": 'cpe:2.3:*:{}:{}:{}:*:*:*:*:*:*:*'.format(vendor or "*", product, version),
-            "purl": 'pkg:generic/{}{}@{}'.format(f"{vendor}/" if vendor else '', product, version),
+            "purl": get_base_purl(d),
             "bom-ref": str(uuid.uuid4())
         }
         if vendor != "":
