@@ -111,7 +111,7 @@ python do_cyclonedx_package_collect() {
     bom_ref_dedup_map = {}
     
     # append all defined package names for recipe to pn_list pkgs
-    for pkg in generate_packages_list(name, version):
+    for pkg in generate_packages_list(name, version, d):
         # Check if we already have a package with this CPE
         existing_pkg = next((c for c in pn_list["pkgs"] if c["cpe"] == pkg["cpe"]), None)
         if existing_pkg:
@@ -360,11 +360,17 @@ def resolve_dependency_ref(depends, bom_ref_map, alias_map):
     # Return None if no solution found
     return None
 
-def generate_packages_list(products_names, version):
+def generate_packages_list(products_names, version, d=None):
     """
     Get a list of products and generate CPE and PURL identifiers for each of them.
+    
+    Args:
+        products_names: CVE_PRODUCT value (may contain multiple products)
+        version: CVE_VERSION value
+        d: BitBake datastore (optional, for generating Yocto PURLs)
     """
     import uuid
+    import urllib.parse
 
     packages = []
 
@@ -374,6 +380,29 @@ def generate_packages_list(products_names, version):
     # Ensure version is never empty (required by some SBOM profiles)
     if not version or version.strip() == "":
         version = "unknown"
+
+    # Generate Yocto PURL if BitBake datastore is available
+    yocto_purl = None
+    if d:
+        try:
+            # Use Yocto's native PURL helper (available since OE-Core commit 874b2d30)
+            import oe.purl
+            yocto_purl = oe.purl.get_base_purl(d)
+        except (ImportError, AttributeError):
+            # Fallback: manually construct pkg:yocto/ PURL for older Yocto versions
+            bpn = d.getVar("BPN")
+            pv = d.getVar("PV")
+            layername = d.getVar("FILE_LAYERNAME")
+            
+            def quote(s):
+                return urllib.parse.quote(s, safe="")
+            
+            if bpn and pv:
+                name = f"{quote(bpn.lower())}@{quote(pv)}"
+                if layername:
+                    yocto_purl = f"pkg:yocto/{quote(layername.lower())}/{name}"
+                else:
+                    yocto_purl = f"pkg:yocto/{name}"
 
     # some packages have alternative names, so we split CVE_PRODUCT
     # convert to set to avoid duplicates
@@ -385,12 +414,18 @@ def generate_packages_list(products_names, version):
         else:
             vendor = ""
 
+        # Use yocto_purl as primary PURL if available, otherwise fall back to pkg:generic/
+        if yocto_purl:
+            purl = yocto_purl
+        else:
+            purl = 'pkg:generic/{}{}@{}'.format(f"{vendor}/" if vendor else '', product, version)
+
         pkg = {
             "name": product,
             "version": version,
             "type": "library",
             "cpe": 'cpe:2.3:*:{}:{}:{}:*:*:*:*:*:*:*'.format(vendor or "*", product, version),
-            "purl": 'pkg:generic/{}{}@{}'.format(f"{vendor}/" if vendor else '', product, version),
+            "purl": purl,
             "bom-ref": str(uuid.uuid4())
         }
         if vendor != "":
