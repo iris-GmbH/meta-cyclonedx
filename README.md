@@ -16,6 +16,8 @@ This layer generates **CycloneDX** compliant SBOMs with the following features:
 - Support for multiple supported Yocto (LTS) releases.
 - Improved package matching against the [NIST NVD](https://nvd.nist.gov/) by
   fixing [CPE](https://nvd.nist.gov/products/cpe) generation process.
+- Native [Yocto PURL](https://github.com/package-url/purl-spec/blob/main/types-doc/yocto-definition.md)
+  support (`pkg:yocto/`) for enhanced provenance tracking.
 - Included [purl](https://github.com/package-url/purl-spec) package URLs.
 - Added generation of an additional CycloneDX VEX file which contains
   information on patched and ignored CVEs from within the OpenEmbedded build
@@ -147,6 +149,41 @@ To disable this feature you can set
 ```sh
 CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS = "0"
 ```
+
+### Package URLs (PURLs)
+
+meta-cyclonedx automatically includes [Package URLs (PURLs)](https://github.com/package-url/purl-spec)
+in generated SBOMs for improved component identification and provenance tracking.
+
+**Automatic Yocto PURL Support:**
+
+When using Yocto Project versions with native PURL support (OE-Core commit
+[874b2d30](https://git.openembedded.org/openembedded-core/commit/?id=874b2d301d3cac617b1028bc6ce91b1f916a6508)
+and later), meta-cyclonedx automatically generates official `pkg:yocto/` PURLs:
+
+```
+pkg:yocto/openembedded-core/glibc@2.35
+```
+
+**Compatibility:**
+
+- **Modern Yocto (scarthgap+)**: Uses native `pkg:yocto/` format
+- **Older Yocto versions**: Automatically constructs `pkg:yocto/` format manually
+- **Fallback**: Uses `pkg:generic/` format if layer information is unavailable
+
+No configuration is required - PURL generation is automatic and adapts to your
+Yocto version.
+
+**PURL Format Details:**
+
+The Yocto PURL format follows the [official specification](https://github.com/package-url/purl-spec/blob/main/types-doc/yocto-definition.md):
+
+- **namespace**: Layer name (from `FILE_LAYERNAME` / `BBFILE_COLLECTIONS`)
+- **name**: Base package name (`BPN`)
+- **version**: Package version (`PV`)
+
+This provides better component correlation across Yocto-based projects and
+improved support in SBOM analysis tools.
 
 ### Advanced Configuration Summary
 
