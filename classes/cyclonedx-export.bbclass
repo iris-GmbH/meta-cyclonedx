@@ -105,11 +105,11 @@ python do_cyclonedx_package_collect() {
     pn_list = {}
     pn_list["pkgs"] = []
     cves = []
-    
+
     # Track duplicate bom-refs that map to the same CPE
     # This prevents self-dependencies when multiple packages share the same CPE
     bom_ref_dedup_map = {}
-    
+
     # append all defined package names for recipe to pn_list pkgs
     for pkg in generate_packages_list(name, version):
         # Check if we already have a package with this CPE
@@ -157,7 +157,7 @@ python do_cyclonedx_package_collect() {
 
     # append any cve status within recipe to pn_list cves
     pn_list["cves"] = cves
-    
+
     # Store the deduplication map for use during deployment
     pn_list["bom_ref_dedup_map"] = bom_ref_dedup_map
 
@@ -304,14 +304,14 @@ def resolve_license_data(d):
 def create_tools_metadata(d):
     """
     Create tools metadata in the format appropriate for the CycloneDX spec version.
-    
+
     Version 1.4: Array format [{"name": "yocto"}]
     Version 1.6: Object format {"components": [{"type": "application", "name": "yocto", ...}]}
     """
     import uuid
-    
+
     spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
-    
+
     if spec_version == "1.4":
         # Legacy array format
         return [{"name": "yocto"}]
@@ -385,7 +385,7 @@ def generate_packages_list(products_names, version):
 
     # keep only the short version which can be matched against vulnerabilities databases
     version = version.split("+git")[0]
-    
+
     # Ensure version is never empty (required by some SBOM profiles)
     if not version or version.strip() == "":
         version = "unknown"
@@ -416,11 +416,11 @@ def generate_packages_list(products_names, version):
 def normalize_cve_id(cve_id):
     """
     Normalize CVE ID by removing patch file suffixes.
-    
+
     Yocto recipes often use multiple patches for the same CVE with suffixes like:
     - CVE-2025-52886-0001.patch
     - CVE-2025-52886-0002.patch
-    
+
     This function strips the numeric suffix to get the canonical CVE ID.
     """
     import re
@@ -436,9 +436,9 @@ def append_to_vex(d, cve, cves, bom_ref):
     This could be backported, patched or ignored CVEs.
     """
     from datetime import datetime, timezone
-    
+
     cve_id, abbrev_status, status, justification = cve
-    
+
     # Normalize CVE ID to remove patch file suffixes (e.g., CVE-2025-52886-0001 -> CVE-2025-52886)
     normalized_cve_id = normalize_cve_id(cve_id)
 
@@ -477,12 +477,12 @@ def append_to_vex(d, cve, cves, bom_ref):
         "state": vex_state,
         "detail": detail_string
     }
-    
+
     # Add timestamps for CycloneDX 1.6+ when enabled
     # This provides better tracking of when vulnerabilities were identified and updated
     spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
     add_timestamps = d.getVar('CYCLONEDX_ADD_VULN_TIMESTAMPS') == "1"
-    
+
     if spec_version == "1.6" and add_timestamps:
         timestamp = datetime.now(timezone.utc).isoformat()
         analysis["firstIssued"] = timestamp
@@ -500,7 +500,8 @@ def append_to_vex(d, cve, cves, bom_ref):
 
 python do_deploy_cyclonedx() {
     """
-    Select CVE and package information and runtime packages and output them into a single export file.
+    Select CVE and package information and runtime packages and output them
+    into a single export file.
     """
     from oe.rootfs import image_list_installed_packages
     import uuid
@@ -512,7 +513,7 @@ python do_deploy_cyclonedx() {
     # Generate unique serial numbers for sbom and vex document
     sbom_serial_number = str(uuid.uuid4())
     vex_serial_number = str(uuid.uuid4())
-    
+
     # Get configured spec version
     spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
 
@@ -565,7 +566,9 @@ python do_deploy_cyclonedx() {
     if d.getVar('CYCLONEDX_RUNTIME_PACKAGES_ONLY') == "1":
         recipes = runtime_recipes
     else:
-        recipes = {pn for pn in os.listdir(cyclonedx_work_dir_root) if os.path.isdir(os.path.join(cyclonedx_work_dir_root, pn))}
+        all_available = {pn for pn in os.listdir(cyclonedx_work_dir_root)
+                        if os.path.isdir(os.path.join(cyclonedx_work_dir_root, pn))}
+        recipes = all_available
 
     save_pn = d.getVar("PN")
 
@@ -576,6 +579,7 @@ python do_deploy_cyclonedx() {
     # Global deduplication map that tracks all duplicate bom-refs across all recipes
     global_bom_ref_dedup_map = {}
 
+    image_recipe_names = set()
     # first loop to fill the dictionary
     for pkg in recipes:
         # To be able to use the CYCLONEDX_WORK_DIR_PN_LIST variable we have to evaluate
@@ -588,14 +592,16 @@ python do_deploy_cyclonedx() {
             continue
 
         pn_list = read_json(pn_list_filepath)
-        
+        image_recipe_names.add(pkg)
         # Merge recipe-level deduplication map into global map
         if "bom_ref_dedup_map" in pn_list:
             global_bom_ref_dedup_map.update(pn_list["bom_ref_dedup_map"])
-        
+
         for pn_pkg in pn_list["pkgs"]:
-            bom_ref_map[pn_pkg["name"]]=pn_pkg
-            alias_map[d.getVar("PN")]=pn_pkg["name"]
+            bom_ref_map[pn_pkg["name"]] = pn_pkg
+            # Map recipe name to its main package
+            if pn_pkg["name"] == pkg:
+                alias_map[pkg] = pkg
 
     for pkg in recipes:
         # To be able to use the CYCLONEDX_WORK_DIR_PN_LIST variable we have to evaluate
@@ -611,78 +617,72 @@ python do_deploy_cyclonedx() {
 
         for pn_pkg in pn_list["pkgs"]:
             # Avoid multiple pkgs referencing the same cpe
-            for sbom_pkg in sbom["components"]:
-                if pn_pkg["cpe"] == sbom_pkg["cpe"]:
-                    break
-            else:
-                # Add scope field to indicate runtime vs build-time component
-                # Can be disabled for certain SBOM profiles or tool compatibility
-                if d.getVar('CYCLONEDX_ADD_COMPONENT_SCOPES') == "1":
-                    if pkg in runtime_recipes:
-                        pn_pkg["scope"] = "required"
-                    else:
-                        pn_pkg["scope"] = "optional"
-                sbom["components"].append(pn_pkg)
+            if any(sbom_pkg["cpe"] == pn_pkg["cpe"] for sbom_pkg in sbom["components"]):
+                continue
+
+            # Add scope field to indicate runtime vs build-time component
+            # Can be disabled for certain SBOM profiles or tool compatibility
+            if d.getVar('CYCLONEDX_ADD_COMPONENT_SCOPES') == "1":
+                pn_pkg["scope"] = "required" if pkg in runtime_recipes else "optional"
+
+            sbom["components"].append(pn_pkg)
         for pn_cve in pn_list["cves"]:
             # Don't replace serial number yet - it will be done after all CVEs are collected
             # This fixes multi-output builds where shared components would get the wrong serial
             vex["vulnerabilities"].append(pn_cve)
 
         # Add dependencies
-        deps = pn_list.get("dependencies")
-        if deps:
-            pn_list["dependencies"] = []
+    for pkg in recipes:
+        d.setVar("PN", pkg)
+        pn_list_filepath = d.getVar("CYCLONEDX_WORK_DIR_PN_LIST")
 
-            for dep_entry in deps:
-                resolved_depends = []
-                
-                # Resolve the component's own bom-ref in case it was deduplicated
-                component_ref = dep_entry["ref"]
-                if component_ref in global_bom_ref_dedup_map:
-                    component_ref = global_bom_ref_dedup_map[component_ref]
-                
-                # Verify that the component exists in the SBOM
-                # If it was filtered out by CPE deduplication, skip this dependency entry
-                component_exists = any(comp["bom-ref"] == component_ref for comp in sbom["components"])
-                if not component_exists:
-                    bb.debug(2, f"Skipping dependency entry for non-existent component: {component_ref}")
+        if not os.path.exists(pn_list_filepath):
+            continue
+
+        pn_list = read_json(pn_list_filepath)
+        deps = pn_list.get("dependencies")
+
+        if not deps:
+            continue
+
+        for dep_entry in deps:
+            component_ref = dep_entry["ref"]
+            if component_ref in global_bom_ref_dedup_map:
+                component_ref = global_bom_ref_dedup_map[component_ref]
+
+            # Skip if component doesn't exist in SBOM
+            if not any(comp["bom-ref"] == component_ref for comp in sbom["components"]):
+                continue
+
+            resolved_depends = []
+
+            for depends in dep_entry["dependsOn"]:
+                if depends not in image_recipe_names:
+                    bb.debug(2, f"Skipping dependency {depends} - not in this image")
                     continue
 
-                for depends in dep_entry["dependsOn"]:
-                    resolved_ref = resolve_dependency_ref(depends, bom_ref_map, alias_map)
-                    if resolved_ref:
-                        # Apply deduplication mapping to resolved reference
-                        if resolved_ref in global_bom_ref_dedup_map:
-                            resolved_ref = global_bom_ref_dedup_map[resolved_ref]
-                        
-                        # Skip self-dependencies (component depending on itself)
-                        if resolved_ref == component_ref:
-                            bb.debug(2, f"Skipping self-dependency: {component_ref} -> {resolved_ref}")
-                            continue
-                        
-                        # Verify that the dependency target exists in the SBOM
-                        # If it was filtered out by CPE deduplication, skip this dependency
-                        dep_exists = any(comp["bom-ref"] == resolved_ref for comp in sbom["components"])
-                        if not dep_exists:
-                            bb.debug(2, f"Skipping dependency to non-existent component: {component_ref} -> {resolved_ref}")
-                            continue
-                        
-                        if resolved_ref not in resolved_depends:
-                            resolved_depends.append(resolved_ref)
+                resolved_ref = resolve_dependency_ref(depends, bom_ref_map, alias_map)
+                if not resolved_ref:
+                    continue
 
-                            # Add component to isolate file
-                            if ((depends in alias_map) and (alias_map[depends] in bom_ref_map)):
-                                comp = bom_ref_map[alias_map[depends]]
-                                if comp not in pn_list["pkgs"] :
-                                    pn_list["pkgs"].append(comp)
-                if resolved_depends :
-                    updated_entry = {"ref": component_ref, "dependsOn": resolved_depends}
-                    pn_list["dependencies"].append(updated_entry)
+                if resolved_ref in global_bom_ref_dedup_map:
+                    resolved_ref = global_bom_ref_dedup_map[resolved_ref]
 
-                    if updated_entry not in sbom["dependencies"]:
-                        sbom["dependencies"].append(updated_entry)
+                if resolved_ref == component_ref:
+                    continue
 
-            write_json(pn_list_filepath, pn_list)
+                # Verify that the component exists in the SBOM
+                # If it was filtered out by CPE deduplication, skip this dependency entry
+                if not any(comp["bom-ref"] == resolved_ref for comp in sbom["components"]):
+                    continue
+
+                if resolved_ref not in resolved_depends:
+                    resolved_depends.append(resolved_ref)
+
+            if resolved_depends:
+                updated_entry = {"ref": component_ref, "dependsOn": resolved_depends}
+                if updated_entry not in sbom["dependencies"]:
+                    sbom["dependencies"].append(updated_entry)
 
     d.setVar("PN", save_pn)
 
