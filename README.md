@@ -225,6 +225,17 @@ CYCLONEDX_ADD_COMPONENT_LICENSES = "1"
 # split license expressions into multiple license entries
 # when possible (default: "1")
 CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS = "1"
+
+# Include unpatched vulnerabilities in VEX (default: "0").
+# If enabled, the cve-check class is inherited to query the NVD.
+# Note that querying the NVD happens at the time of running the
+# task, which currently requires rootfs generation. You may
+# want to use external tools such as DependencyTrack for regular analysis.
+CYCLONEDX_INCLUDE_UNPATCHED_VULNS = "1"
+
+# State to assign to unpatched vulnerabilities (default: "in_triage").
+# Can be empty to omit the state field.
+CYCLONEDX_UNPATCHED_VULNS_STATE = "in_triage"
 ```
 
 ## Usage

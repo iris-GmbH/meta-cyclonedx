@@ -27,6 +27,17 @@ CYCLONEDX_ADD_COMPONENT_SCOPES ??= "1"
 # Available in CycloneDX 1.6
 CYCLONEDX_ADD_VULN_TIMESTAMPS ??= "1"
 
+# Include unpatched vulnerabilities in VEX.
+# If enabled, the cve-check class is inherited to query the NVD.
+# Note that querying the NVD happens at the time of running the
+# task, which currently requires rootfs generation. You may
+# want to use external tools for regular analysis.
+CYCLONEDX_INCLUDE_UNPATCHED_VULNS ??= "0"
+
+# State to assign to unpatched vulnerabilities.
+# Can be empty to omit the state field.
+CYCLONEDX_UNPATCHED_VULNS_STATE ??= "in_triage"
+
 CYCLONEDX_RUNTIME_PACKAGES_ONLY ??= "1"
 
 # Add component licenses (as specified within the recipe) to the SBOM
@@ -48,6 +59,10 @@ CYCLONEDX_WORK_DIR_PN_LIST = "${CYCLONEDX_WORK_DIR}/pn-list.json"
 # We need to add the sbom serial number to the list of vulnerabilites for each recipe but
 # don't know it until after we generate the sbom export header file
 CYCLONEDX_SBOM_SERIAL_PLACEHOLDER = "<SBOM_SERIAL>"
+
+# If unpatched vulnerabilities are to be included, we need to inherit the cve-check class.
+# This is because we rely on the `check_cves` function from that class to query the NVD.
+inherit_defer ${@ "cve-check" if d.getVar("CYCLONEDX_INCLUDE_UNPATCHED_VULNS") == "1" else ""}
 
 # resolve CVE_CHECK_IGNORE and CVE_STATUS_GROUPS,
 # taken from https://git.yoctoproject.org/poky/commit/meta/classes/cve-check.bbclass?id=be9883a92bad0fe4c1e9c7302c93dea4ac680f8c
@@ -132,7 +147,8 @@ python do_cyclonedx_package_collect() {
         bom_ref = pkg["bom-ref"]
 
         # append any CVEs either patched or taken from CVE_STATUS
-        for cve_id, cve_info in get_patched_cves(d).items():
+        patched_cves = get_patched_cves(d)
+        for cve_id, cve_info in patched_cves.items():
             cve = (
                 cve_id,
                 cve_info["abbrev-status"],
@@ -140,6 +156,29 @@ python do_cyclonedx_package_collect() {
                 cve_info.get("justification", "")
             )
             append_to_vex(d, cve, cves, bom_ref)
+
+        # The check_cves function is coming from the cve-check class
+        # that we conditionally inherit to query the NVD.
+        if d.getVar("CYCLONEDX_INCLUDE_UNPATCHED_VULNS") == "1" and os.path.exists(d.getVar("CVE_CHECK_DB_FILE")):
+            with bb.utils.fileslocked([d.getVar("CVE_CHECK_DB_FILE_LOCK")], shared=True):
+                bb.debug(2, f"Querying CVE database for unpatched CVEs for package {pn}")
+
+                # Turn off warnings and restore afterwards
+                cve_check_show_warnings_original = d.getVar("CVE_CHECK_SHOW_WARNINGS")
+                d.setVar("CVE_CHECK_SHOW_WARNINGS", "0")
+                cve_data, _ = check_cves(d, patched_cves)
+                d.setVar("CVE_CHECK_SHOW_WARNINGS", cve_check_show_warnings_original)
+
+                unpatched_cve_ids = [cve_id for cve_id, data in cve_data.items() if data["abbrev-status"] == "Unpatched"]
+                bb.debug(2, f"Found {len(unpatched_cve_ids)} unpatched CVEs for package {pn}")
+                for cve_id in unpatched_cve_ids:
+                    cve = (
+                        cve_id,
+                        "Unpatched",
+                        "no-fix-supplied",
+                        ""
+                    )
+                    append_to_vex(d, cve, cves, bom_ref)
 
     # append any cve status within recipe to pn_list cves
     pn_list["cves"] = cves
@@ -174,6 +213,10 @@ python do_cyclonedx_package_collect() {
 
 addtask do_cyclonedx_package_collect before do_build
 do_cyclonedx_package_collect[cleandirs] = "${CYCLONEDX_TMP_WORK_DIR}"
+
+# We cannot set nostamp on do_cyclonedx_package_collect conditionally due to YP bug #13808.
+# Instead, we conditionally include a file.
+require ${@ "include/include-unpatched.inc" if d.getVar("CYCLONEDX_INCLUDE_UNPATCHED_VULNS") == "1" else ""}
 
 # Utilizing shared state for output caching
 # see https://docs.yoctoproject.org/overview-manual/concepts.html#shared-state
@@ -428,7 +471,8 @@ def append_to_vex(d, cve, cves, bom_ref):
     # Normalize CVE ID to remove patch file suffixes (e.g., CVE-2025-52886-0001 -> CVE-2025-52886)
     normalized_cve_id = normalize_cve_id(cve_id)
 
-    # Currently, only "Patched" and "Ignored" status are relevant to us.
+    include_unpatched = d.getVar("CYCLONEDX_INCLUDE_UNPATCHED_VULNS") == "1"
+
     # See https://docs.yoctoproject.org/singleindex.html#term-CVE_CHECK_STATUSMAP for possible statuses.
     if abbrev_status == "Patched":
         bb.debug(2, f"Found patch for {normalized_cve_id} in {d.getVar('BPN')}")
@@ -436,6 +480,9 @@ def append_to_vex(d, cve, cves, bom_ref):
     elif abbrev_status == "Ignored":
         bb.debug(2, f"Found ignore statement for {normalized_cve_id} in {d.getVar('BPN')}")
         vex_state = "not_affected"
+    elif abbrev_status == "Unpatched" and include_unpatched:
+        bb.debug(2, f"Found unpatched status for {normalized_cve_id} in {d.getVar('BPN')}")
+        vex_state = d.getVar("CYCLONEDX_UNPATCHED_VULNS_STATE")
     else:
         bb.debug(2, f"Found unknown or irrelevant CVE status {abbrev_status} for {normalized_cve_id} in {d.getVar('BPN')}. Skipping...")
         return
@@ -459,9 +506,10 @@ def append_to_vex(d, cve, cves, bom_ref):
 
     # Build analysis object
     analysis = {
-        "state": vex_state,
         "detail": detail_string
     }
+    if vex_state:
+        analysis["state"] = vex_state
 
     # Add timestamps for CycloneDX 1.6+ when enabled
     # This provides better tracking of when vulnerabilities were identified and updated
