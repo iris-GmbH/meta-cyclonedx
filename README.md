@@ -238,6 +238,45 @@ CYCLONEDX_INCLUDE_UNPATCHED_VULNS = "1"
 CYCLONEDX_UNPATCHED_VULNS_STATE = "in_triage"
 ```
 
+### Use with non-rootfs image recipes
+
+The default use of `cyclonedx-export.bbclass` only produces SBOM for recipes
+that inherits `image.bbclass`. In order to produce an SBOM for an image like
+recipe that does not generate a filesystem image, and thus not inherits
+`image.bbclass`, you can use the `CYCLONEDX_EXPORT_DEPENDS` variable to list the
+dependencies to consider/include. Something like this
+
+```sh
+CYCLONEDX_EXPORT_DEPENDS = "${DEPENDS}"
+```
+
+The dependencies will be filtered so that non-target recipes are excluded, and
+the remaining dependencies will be processed with `PREFERRED_PROVIDER_*`
+variables, so that you can include things like `virtual/bootloader` and
+`virtual/kernel`.
+
+Note: There is no recursion of `CYCLONEDX_EXPORT_DEPENDS`, so only the listed
+dependencies are included in the SBOM. So while this does allow using with any
+kind of recipe, it is in-practise mainly usable for simple compound images, like
+a bootloader image consisting of the output from a handful of recipes.
+
+In addition to settting `CYCLONEDX_EXPORT_DEPENDS` you will also need to hook up
+`do_populate_cyclonedx` and `do_deploy_cyclonedx` tasks. The
+`do_populate_cyclonedx` task should be added to `recrdeptask` flag on the recipe
+task that produces the image output, and the `do_deploy_cyclonedx` task should
+be added to the recipe.
+
+#### Example for producing SBOM for a genimage.bbclass recipe
+
+This is an example of how to produce SBOM for an image recipe using
+`genimage.bbclass` from [meta-ptx](https://github.com/pengutronix/meta-ptx):
+
+```sh
+CYCLONEDX_EXPORT_DEPENDS = "${DEPENDS}"
+do_genimage[recrdeptask] += "do_populate_cyclonedx"
+addtask do_deploy_cyclonedx after do_deploy before do_build
+```
+
 ## Usage
 
 Once everything is configured simply build your image as you normally would.
