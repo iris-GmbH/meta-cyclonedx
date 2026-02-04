@@ -544,12 +544,42 @@ def append_to_vex(d, cve, cves, bom_ref):
     })
     return
 
+def list_runtime_recipes(d):
+    depends = (d.getVar("CYCLONEDX_EXPORT_DEPENDS") or "").split()
+    if depends:
+        return list_runtime_recipes_from_depends(d, depends)
+    else:
+        return list_runtime_recipes_from_packages(d)
+
+def list_runtime_recipes_from_packages(d):
+    from oe.rootfs import image_list_installed_packages
+    runtime_recipes = set()
+    for pkg in list(image_list_installed_packages(d)):
+        pkg_info = os.path.join(d.getVar('PKGDATA_DIR'),
+                                'runtime-reverse', pkg)
+        pkg_data = oe.packagedata.read_pkgdatafile(pkg_info)
+        runtime_recipes.add(pkg_data["PN"])
+    return runtime_recipes
+
+def list_runtime_recipes_from_depends(d, depends):
+    runtime_recipes = set()
+    ignored_suffixes = d.getVar("SPECIAL_PKGSUFFIX", "").split()
+    def runtime_recipe(dependency):
+        for ignored_suffix in ignored_suffixes:
+            if dependency.endswith(ignored_suffix):
+                return None
+        return d.getVar(f"PREFERRED_PROVIDER_{dependency}") or dependency
+    for dependency in depends:
+        recipe = runtime_recipe(dependency)
+        if recipe:
+            runtime_recipes.add(recipe)
+    return runtime_recipes
+
 python do_deploy_cyclonedx() {
     """
     Select CVE and package information and runtime packages and output them
     into a single export file.
     """
-    from oe.rootfs import image_list_installed_packages
     import uuid
     from datetime import datetime, timezone
     import os
@@ -600,12 +630,7 @@ python do_deploy_cyclonedx() {
     # Collect sbom data from runtime packages
 
     # Determine runtime packages for scope assignment
-    runtime_recipes = set()
-    for pkg in list(image_list_installed_packages(d)):
-        pkg_info = os.path.join(d.getVar('PKGDATA_DIR'),
-                                'runtime-reverse', pkg)
-        pkg_data = oe.packagedata.read_pkgdatafile(pkg_info)
-        runtime_recipes.add(pkg_data["PN"])
+    runtime_recipes = list_runtime_recipes(d)
 
     # Determine which recipes to include
     recipes = set()
