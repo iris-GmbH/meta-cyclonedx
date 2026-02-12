@@ -108,9 +108,13 @@ python () {
 # Clean out work folder to avoid leftovers from previous builds when including build-time package
 # information and a recipe was removed from the dependency list. (CYCLONEDX_RUNTIME_PACKAGES_ONLY set to 0)
 python clean_cyclonedx_work_folder() {
-    bb.note(f"Cleaning cyclonedx work folder {d.getVar('CYCLONEDX_WORK_DIR_ROOT')}")
+    import shutil
+    cyclonedx_work_dir_root = d.getVar('CYCLONEDX_WORK_DIR_ROOT')
+    bb.debug(f"Cleaning cyclonedx work folder {cyclonedx_work_dir_root}")
+    if os.path.exists(cyclonedx_work_dir_root):
+        shutil.rmtree(cyclonedx_work_dir_root)
+    bb.utils.mkdirhier(cyclonedx_work_dir_root)
 }
-clean_cyclonedx_work_folder[cleandirs] = "${CYCLONEDX_WORK_DIR_ROOT}"
 addhandler clean_cyclonedx_work_folder
 clean_cyclonedx_work_folder[eventmask] = "bb.event.BuildStarted"
 
