@@ -96,7 +96,7 @@ python () {
 python clean_cyclonedx_work_folder() {
     import shutil
     cyclonedx_work_dir_root = d.getVar('CYCLONEDX_WORK_DIR_ROOT')
-    bb.debug(f"Cleaning cyclonedx work folder {cyclonedx_work_dir_root}")
+    bb.debug(1, f"Cleaning cyclonedx work folder {cyclonedx_work_dir_root}")
     if os.path.exists(cyclonedx_work_dir_root):
         shutil.rmtree(cyclonedx_work_dir_root)
     bb.utils.mkdirhier(cyclonedx_work_dir_root)
