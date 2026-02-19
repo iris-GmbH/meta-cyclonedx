@@ -61,9 +61,15 @@ CYCLONEDX_ADD_CITATION ??= "1"
 CYCLONEDX_TLP_MARKING ??= ""
 
 CYCLONEDX_TMP_EXPORT_DIR = "${WORKDIR}/cyclonedx-export"
-CYCLONEDX_EXPORT_DIR ??= "${DEPLOY_DIR}/cyclonedx-export/${IMAGE_BASENAME}"
-CYCLONEDX_EXPORT_SBOM ??= "${CYCLONEDX_EXPORT_DIR}/bom.json"
-CYCLONEDX_EXPORT_VEX ??= "${CYCLONEDX_EXPORT_DIR}/vex.json"
+CYCLONEDX_EXPORT_DIR ??= "${DEPLOY_DIR_IMAGE}"
+# Try to set meaningful default filenames for both image and non-image recipes
+CYCLONEDX_EXPORT_BASENAME ?= "${@d.getVar('IMAGE_NAME') or d.getVar('IMAGE_BASENAME') or d.getVar('PN')}.cyclonedx"
+CYCLONEDX_EXPORT_SBOM ??= "${CYCLONEDX_EXPORT_BASENAME}.bom.json"
+CYCLONEDX_EXPORT_VEX ??= "${CYCLONEDX_EXPORT_BASENAME}.vex.json"
+# Create symlinks for image recipes similar to the image files by default
+IMAGE_LINK_NAME ??= ""
+CYCLONEDX_EXPORT_SBOM_LINK ??= "${@'${IMAGE_LINK_NAME}.cyclonedx.bom.json' if d.getVar('IMAGE_LINK_NAME') else ''}"
+CYCLONEDX_EXPORT_VEX_LINK ??= "${@'${IMAGE_LINK_NAME}.cyclonedx.vex.json' if d.getVar('IMAGE_LINK_NAME') else ''}"
 CYCLONEDX_PNDATA_WORKDIR = "${WORKDIR}/cyclonedx"
 CYCLONEDX_PNDATA = "${TMPDIR}/cyclonedx/pn/${MACHINE}"
 CYCLONEDX_BUILDTIME_DIR = "${TMPDIR}/cyclonedx/buildtime"
