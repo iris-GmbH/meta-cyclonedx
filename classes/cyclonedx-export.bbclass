@@ -34,9 +34,6 @@ CYCLONEDX_ADD_COMPONENT_LICENSES ??= "1"
 # Optionally, split simple license expressions (only containing "AND") into multiple licenses.
 CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS ??= "1"
 
-CYCLONEDX_EXPORT_DIR ??= "${DEPLOY_DIR}/cyclonedx-export"
-CYCLONEDX_EXPORT_SBOM ??= "${CYCLONEDX_EXPORT_DIR}/bom.json"
-CYCLONEDX_EXPORT_VEX ??= "${CYCLONEDX_EXPORT_DIR}/vex.json"
 CYCLONEDX_TMP_WORK_DIR ??= "${WORKDIR}/cyclonedx"
 CYCLONEDX_TMP_PN_LIST = "${CYCLONEDX_TMP_WORK_DIR}/pn-list.json"
 CYCLONEDX_WORK_DIR_ROOT ??= "${TMPDIR}/cyclonedx"
@@ -57,12 +54,13 @@ python () {
 # Clean out work folder to avoid leftovers from previous builds when including build-time package
 # information and a recipe was removed from the dependency list. (CYCLONEDX_RUNTIME_PACKAGES_ONLY set to 0)
 python clean_cyclonedx_work_folder() {
-    import shutil
-    cyclonedx_work_dir_root = d.getVar('CYCLONEDX_WORK_DIR_ROOT')
-    bb.debug(1, f"Cleaning cyclonedx work folder {cyclonedx_work_dir_root}")
-    if os.path.exists(cyclonedx_work_dir_root):
-        shutil.rmtree(cyclonedx_work_dir_root)
-    bb.utils.mkdirhier(cyclonedx_work_dir_root)
+    if not bb.utils.to_boolean(d.getVar("CYCLONEDX_RUNTIME_PACKAGES_ONLY")):
+        import shutil
+        cyclonedx_work_dir_root = d.getVar('CYCLONEDX_WORK_DIR_ROOT')
+        bb.debug(1, f"Cleaning cyclonedx work folder {cyclonedx_work_dir_root}")
+        if os.path.exists(cyclonedx_work_dir_root):
+            shutil.rmtree(cyclonedx_work_dir_root)
+        bb.utils.mkdirhier(cyclonedx_work_dir_root)
 }
 addhandler clean_cyclonedx_work_folder
 clean_cyclonedx_work_folder[eventmask] = "bb.event.BuildStarted"
@@ -178,6 +176,7 @@ python do_populate_cyclonedx_setscene() {
 do_populate_cyclonedx[cleandirs] = "${CYCLONEDX_WORK_DIR}"
 do_populate_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_TMP_WORK_DIR}"
 do_populate_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_WORK_DIR}"
+do_populate_cyclonedx[vardeps] += "CYCLONEDX_RUNTIME_PACKAGES_ONLY"
 addtask do_populate_cyclonedx_setscene
 addtask do_populate_cyclonedx after do_cyclonedx_package_collect
 do_rootfs[recrdeptask] += "do_populate_cyclonedx"
@@ -479,6 +478,7 @@ python do_deploy_cyclonedx() {
     from oe.rootfs import image_list_installed_packages
     import uuid
     from datetime import datetime, timezone
+    from pathlib import Path
     import os
 
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -668,10 +668,25 @@ python do_deploy_cyclonedx() {
                 affect["ref"] = affect["ref"].replace(
                     d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER'), sbom_serial_number)
 
-    write_json(d.getVar("CYCLONEDX_EXPORT_SBOM"), sbom)
-    write_json(d.getVar("CYCLONEDX_EXPORT_VEX"), vex)
+    image_name = d.getVar("IMAGE_NAME")
+    image_link_name = d.getVar("IMAGE_LINK_NAME")
+    imgdeploydir = Path(d.getVar("IMGDEPLOYDIR"))
+
+    image_sbom_path = imgdeploydir / (image_name + ".cyclonedx.sbom.json")
+    image_vex_path = imgdeploydir / (image_name + ".cyclonedx.vex.json")
+
+    write_json(image_sbom_path, sbom)
+    write_json(image_vex_path, vex)
+
+    def make_image_link(target_path, suffix):
+        if image_link_name:
+            link = imgdeploydir / (image_link_name + suffix)
+            if link != target_path:
+                link.symlink_to(os.path.relpath(target_path, link.parent))
+
+    make_image_link(image_sbom_path, ".cyclonedx.sbom.json")
+    make_image_link(image_vex_path, ".cyclonedx.vex.json")
 }
-do_deploy_cyclonedx[cleandirs] = "${CYCLONEDX_EXPORT_DIR}"
 
 # We use ROOTFS_POSTUNINSTALL_COMMAND to make sure this function runs exactly once
 # after the build process has been completed
