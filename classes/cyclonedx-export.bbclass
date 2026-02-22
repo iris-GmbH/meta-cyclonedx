@@ -34,9 +34,6 @@ CYCLONEDX_ADD_COMPONENT_LICENSES ??= "1"
 # Optionally, split simple license expressions (only containing "AND") into multiple licenses.
 CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS ??= "1"
 
-CYCLONEDX_EXPORT_DIR ??= "${DEPLOY_DIR}/cyclonedx-export"
-CYCLONEDX_EXPORT_SBOM ??= "${CYCLONEDX_EXPORT_DIR}/bom.json"
-CYCLONEDX_EXPORT_VEX ??= "${CYCLONEDX_EXPORT_DIR}/vex.json"
 CYCLONEDX_TMP_WORK_DIR ??= "${WORKDIR}/cyclonedx"
 CYCLONEDX_TMP_PN_LIST = "${CYCLONEDX_TMP_WORK_DIR}/pn-list.json"
 CYCLONEDX_WORK_DIR_ROOT ??= "${TMPDIR}/cyclonedx"
@@ -481,6 +478,7 @@ python do_deploy_cyclonedx() {
     from oe.rootfs import image_list_installed_packages
     import uuid
     from datetime import datetime, timezone
+    from pathlib import Path
     import os
 
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -670,10 +668,25 @@ python do_deploy_cyclonedx() {
                 affect["ref"] = affect["ref"].replace(
                     d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER'), sbom_serial_number)
 
-    write_json(d.getVar("CYCLONEDX_EXPORT_SBOM"), sbom)
-    write_json(d.getVar("CYCLONEDX_EXPORT_VEX"), vex)
+    image_name = d.getVar("IMAGE_NAME")
+    image_link_name = d.getVar("IMAGE_LINK_NAME")
+    imgdeploydir = Path(d.getVar("IMGDEPLOYDIR"))
+
+    image_sbom_path = imgdeploydir / (image_name + ".cyclonedx.sbom.json")
+    image_vex_path = imgdeploydir / (image_name + ".cyclonedx.vex.json")
+
+    write_json(image_sbom_path, sbom)
+    write_json(image_vex_path, vex)
+
+    def make_image_link(target_path, suffix):
+        if image_link_name:
+            link = imgdeploydir / (image_link_name + suffix)
+            if link != target_path:
+                link.symlink_to(os.path.relpath(target_path, link.parent))
+
+    make_image_link(image_sbom_path, ".cyclonedx.sbom.json")
+    make_image_link(image_vex_path, ".cyclonedx.vex.json")
 }
-do_deploy_cyclonedx[cleandirs] = "${CYCLONEDX_EXPORT_DIR}"
 
 # We use ROOTFS_POSTUNINSTALL_COMMAND to make sure this function runs exactly once
 # after the build process has been completed
