@@ -92,12 +92,13 @@ python () {
 # Clean out work folder to avoid leftovers from previous builds when including build-time package
 # information and a recipe was removed from the dependency list. (CYCLONEDX_RUNTIME_PACKAGES_ONLY set to 0)
 python clean_cyclonedx_work_folder() {
-    import shutil
-    cyclonedx_work_dir_root = d.getVar('CYCLONEDX_WORK_DIR_ROOT')
-    bb.debug(1, f"Cleaning cyclonedx work folder {cyclonedx_work_dir_root}")
-    if os.path.exists(cyclonedx_work_dir_root):
-        shutil.rmtree(cyclonedx_work_dir_root)
-    bb.utils.mkdirhier(cyclonedx_work_dir_root)
+    if not bb.utils.to_boolean(d.getVar("CYCLONEDX_RUNTIME_PACKAGES_ONLY")):
+        import shutil
+        cyclonedx_work_dir_root = d.getVar('CYCLONEDX_WORK_DIR_ROOT')
+        bb.debug(1, f"Cleaning cyclonedx work folder {cyclonedx_work_dir_root}")
+        if os.path.exists(cyclonedx_work_dir_root):
+            shutil.rmtree(cyclonedx_work_dir_root)
+        bb.utils.mkdirhier(cyclonedx_work_dir_root)
 }
 addhandler clean_cyclonedx_work_folder
 clean_cyclonedx_work_folder[eventmask] = "bb.event.BuildStarted"
@@ -247,6 +248,7 @@ python do_populate_cyclonedx_setscene() {
 do_populate_cyclonedx[cleandirs] = "${CYCLONEDX_WORK_DIR}"
 do_populate_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_TMP_WORK_DIR}"
 do_populate_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_WORK_DIR}"
+do_populate_cyclonedx[vardeps] += "CYCLONEDX_RUNTIME_PACKAGES_ONLY"
 addtask do_populate_cyclonedx_setscene
 addtask do_populate_cyclonedx after do_cyclonedx_package_collect
 do_rootfs[recrdeptask] += "do_populate_cyclonedx"
