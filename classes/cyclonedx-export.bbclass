@@ -60,7 +60,6 @@ CYCLONEDX_ADD_CITATION ??= "1"
 # See: https://www.cisa.gov/tlp
 CYCLONEDX_TLP_MARKING ??= ""
 
-CYCLONEDX_EXPORT_DIR ??= "${DEPLOY_DIR}/cyclonedx-export/${PN}"
 CYCLONEDX_EXPORT_DIR ??= "${DEPLOY_DIR}/cyclonedx-export/${IMAGE_BASENAME}"
 CYCLONEDX_EXPORT_SBOM ??= "${CYCLONEDX_EXPORT_DIR}/bom.json"
 CYCLONEDX_EXPORT_VEX ??= "${CYCLONEDX_EXPORT_DIR}/vex.json"
