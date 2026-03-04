@@ -357,8 +357,7 @@ addtask do_deploy_cyclonedx after do_deploy before do_build
 
 Once everything is configured simply build your image as you normally would.
 By default the final CycloneDX SBOMs are saved to the folder
-`${DEPLOY_DIR}/${PN}/cyclonedx-export` as `bom.json` and `vex.json`
-respectively.
+`${DEPLOY_DIR}/cyclonedx-export/${IMAGE_BASENAME}` as `bom.json` and `vex.json`.
 
 ## Uploading to DependencyTrack (tested against DT v4.11.4)
 
