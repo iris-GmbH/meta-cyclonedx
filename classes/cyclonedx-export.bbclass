@@ -572,9 +572,12 @@ python do_deploy_cyclonedx() {
 
         for pn_pkg in pn_list["pkgs"]:
             bom_ref_map[pn_pkg["name"]] = pn_pkg
-            # Map recipe name to its main package
-            if pn_pkg["name"] == pkg:
-                alias_map[pkg] = pkg
+            # Map recipe name to its primary component name.
+            # Handles cases where recipe name differs from CVE_PRODUCT/BPN,
+            # e.g. recipe "sqlite3" produces component "sqlite".
+            # Only map once, to the first/primary package.
+            if pkg not in alias_map:
+                alias_map[pkg] = pn_pkg["name"]
 
     for pkg in recipes:
         # To be able to use the CYCLONEDX_WORK_DIR_PN_LIST variable we have to evaluate
