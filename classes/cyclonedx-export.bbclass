@@ -68,7 +68,7 @@ python clean_cyclonedx_work_folder() {
 addhandler clean_cyclonedx_work_folder
 clean_cyclonedx_work_folder[eventmask] = "bb.event.BuildStarted"
 
-python do_cyclonedx_package_collect() {
+python do_populate_cyclonedx() {
     """
     Collect package information and CVE data from all packages built for the target architecture.
     """
@@ -163,24 +163,16 @@ python do_cyclonedx_package_collect() {
     write_json(d.getVar("CYCLONEDX_TMP_PN_LIST"), pn_list)
 }
 
-addtask do_cyclonedx_package_collect before do_build
-do_cyclonedx_package_collect[cleandirs] = "${CYCLONEDX_TMP_WORK_DIR}"
-
-# Utilizing shared state for output caching
-# see https://docs.yoctoproject.org/overview-manual/concepts.html#shared-state
+addtask do_populate_cyclonedx before do_build
+do_populate_cyclonedx[cleandirs] = "${CYCLONEDX_TMP_WORK_DIR}"
 SSTATETASKS += "do_populate_cyclonedx"
-do_populate_cyclonedx() {
-    bbnote "Deploying intermediate product name list files from ${CYCLONEDX_TMP_WORK_DIR} to ${CYCLONEDX_WORK_DIR}"
-}
+do_populate_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_TMP_WORK_DIR}"
+do_populate_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_WORK_DIR}"
 python do_populate_cyclonedx_setscene() {
     sstate_setscene(d)
 }
-
-do_populate_cyclonedx[cleandirs] = "${CYCLONEDX_WORK_DIR}"
-do_populate_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_TMP_WORK_DIR}"
-do_populate_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_WORK_DIR}"
 addtask do_populate_cyclonedx_setscene
-addtask do_populate_cyclonedx after do_cyclonedx_package_collect
+
 do_rootfs[recrdeptask] += "do_populate_cyclonedx"
 
 def read_json(path):
