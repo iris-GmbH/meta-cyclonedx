@@ -727,6 +727,13 @@ def export_cyclonedx(d):
     write_json(export_sbom, sbom)
     write_json(export_vex, vex)
 
+    def make_deploy_symlink(target, link_name):
+        if link_name and target != link_name:
+            target = Path(target).relative_to(os.path.dirname(link_name))
+            os.symlink(target, link_name)
+    make_deploy_symlink(export_sbom, get_cyclonedx_export_path("CYCLONEDX_EXPORT_SBOM_LINK"))
+    make_deploy_symlink(export_vex, get_cyclonedx_export_path("CYCLONEDX_EXPORT_VEX_LINK"))
+
 python do_export_cyclonedx() {
     export_cyclonedx(d)
 }
