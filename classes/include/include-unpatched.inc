@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: MIT
 
-do_cyclonedx_package_collect[depends] += "${PN}:do_cve_check"
-do_cyclonedx_package_collect[nostamp] = "1"
+do_populate_cyclonedx[depends] += "${PN}:do_cve_check"
+do_populate_cyclonedx[nostamp] = "1"
