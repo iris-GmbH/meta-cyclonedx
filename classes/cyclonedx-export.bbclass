@@ -64,11 +64,9 @@ CYCLONEDX_TMP_EXPORT_DIR = "${WORKDIR}/cyclonedx-export"
 CYCLONEDX_EXPORT_DIR ??= "${DEPLOY_DIR}/cyclonedx-export/${IMAGE_BASENAME}"
 CYCLONEDX_EXPORT_SBOM ??= "${CYCLONEDX_EXPORT_DIR}/bom.json"
 CYCLONEDX_EXPORT_VEX ??= "${CYCLONEDX_EXPORT_DIR}/vex.json"
-CYCLONEDX_TMP_WORK_DIR ??= "${WORKDIR}/cyclonedx"
-CYCLONEDX_TMP_PN_LIST = "${CYCLONEDX_TMP_WORK_DIR}/pn-list.json"
-CYCLONEDX_WORK_DIR_ROOT ??= "${TMPDIR}/cyclonedx"
-CYCLONEDX_WORK_DIR = "${CYCLONEDX_WORK_DIR_ROOT}/${PN}"
-CYCLONEDX_WORK_DIR_PN_LIST = "${CYCLONEDX_WORK_DIR}/pn-list.json"
+CYCLONEDX_PNDATA_WORKDIR = "${WORKDIR}/cyclonedx"
+CYCLONEDX_PNDATA = "${TMPDIR}/cyclonedx/pn/${MACHINE}"
+CYCLONEDX_BUILDTIME_DIR = "${TMPDIR}/cyclonedx/buildtime"
 
 # We need to add the sbom serial number to the list of vulnerabilites for each recipe but
 # don't know it until after we generate the sbom export header file
@@ -105,24 +103,26 @@ python () {
         bb.fatal(f"Unsupported CYCLONEDX_SPEC_VERSION: {spec_version}. Supported versions: 1.4, 1.6, 1.7")
 }
 
-# Clean out work folder to avoid leftovers from previous builds when including build-time package
-# information and a recipe was removed from the dependency list. (CYCLONEDX_RUNTIME_PACKAGES_ONLY set to 0)
-python clean_cyclonedx_work_folder() {
-    import shutil
-    cyclonedx_work_dir_root = d.getVar('CYCLONEDX_WORK_DIR_ROOT')
-    bb.debug(1, f"Cleaning cyclonedx work folder {cyclonedx_work_dir_root}")
-    if os.path.exists(cyclonedx_work_dir_root):
-        shutil.rmtree(cyclonedx_work_dir_root)
-    bb.utils.mkdirhier(cyclonedx_work_dir_root)
+# Clean out buildtime dir to prepare for creating complete list of build-time package information
+python clean_buildtime_dir() {
+    if bb.utils.to_boolean(d.getVar("CYCLONEDX_RUNTIME_PACKAGES_ONLY")):
+        return
+    cyclonedx_buildtime_dir = d.getVar('CYCLONEDX_BUILDTIME_DIR')
+    bb.debug(1, f"Cleaning cyclonedx buildtime dir {cyclonedx_buildtime_dir}")
+    if os.path.exists(cyclonedx_buildtime_dir):
+        import shutil
+        shutil.rmtree(cyclonedx_buildtime_dir)
+    bb.utils.mkdirhier(cyclonedx_buildtime_dir)
 }
-addhandler clean_cyclonedx_work_folder
-clean_cyclonedx_work_folder[eventmask] = "bb.event.BuildStarted"
+addhandler clean_buildtime_dir
+clean_buildtime_dir[eventmask] = "bb.event.BuildStarted"
 
 python do_populate_cyclonedx() {
     """
     Collect package information and CVE data from all packages built for the target architecture.
     """
     from oe.cve_check import get_patched_cves
+    from pathlib import Path
 
     pn = d.getVar("PN")
 
@@ -226,14 +226,17 @@ python do_populate_cyclonedx() {
     pn_list["dependencies"] = dependencies
 
     # write partial sbom to the recipes work folder
-    write_json(d.getVar("CYCLONEDX_TMP_PN_LIST"), pn_list)
+    write_json(os.path.join(d.getVar("CYCLONEDX_PNDATA_WORKDIR"), f"{pn}.json"), pn_list)
+
+    if not bb.utils.to_boolean(d.getVar("CYCLONEDX_RUNTIME_PACKAGES_ONLY")):
+        Path(os.path.join(d.getVar("CYCLONEDX_BUILDTIME_DIR"), pn)).touch()
 }
 
 addtask do_populate_cyclonedx before do_build
-do_populate_cyclonedx[cleandirs] = "${CYCLONEDX_TMP_WORK_DIR}"
+do_populate_cyclonedx[cleandirs] = "${CYCLONEDX_PNDATA_WORKDIR}"
 SSTATETASKS += "do_populate_cyclonedx"
-do_populate_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_TMP_WORK_DIR}"
-do_populate_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_WORK_DIR}"
+do_populate_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_PNDATA_WORKDIR}"
+do_populate_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_PNDATA}"
 python do_populate_cyclonedx_setscene() {
     sstate_setscene(d)
 }
@@ -717,6 +720,7 @@ def export_cyclonedx(d):
     import uuid
     from datetime import datetime, timezone
     import os
+    from pathlib import Path
 
     timestamp = datetime.now(timezone.utc).isoformat()
 
@@ -727,7 +731,7 @@ def export_cyclonedx(d):
     # Get configured spec version
     spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
 
-    cyclonedx_work_dir_root = d.getVar("CYCLONEDX_WORK_DIR_ROOT")
+    cyclonedx_buildtime_dir = d.getVar("CYCLONEDX_BUILDTIME_DIR")
 
     # Generate sbom document header
     bb.debug(2, f"Creating empty temporary sbom file with serial number {sbom_serial_number}")
@@ -777,11 +781,9 @@ def export_cyclonedx(d):
     if d.getVar('CYCLONEDX_RUNTIME_PACKAGES_ONLY') == "1":
         recipes = runtime_recipes
     else:
-        all_available = {pn for pn in os.listdir(cyclonedx_work_dir_root)
-                        if os.path.isdir(os.path.join(cyclonedx_work_dir_root, pn))}
-        recipes = all_available
-
-    save_pn = d.getVar("PN")
+        all_available = {pn for pn in os.listdir(cyclonedx_buildtime_dir)
+                        if os.path.isdir(os.path.join(cyclonedx_buildtime_dir, pn))}
+        recipes = all_available.union(runtime_recipes)
 
     # Create a bom_ref_map for dependencies sanitarization
     # And an alias_map to retrieve real pkg name
@@ -793,16 +795,12 @@ def export_cyclonedx(d):
     image_recipe_names = set()
     # first loop to fill the dictionary
     for pkg in recipes:
-        # To be able to use the CYCLONEDX_WORK_DIR_PN_LIST variable we have to evaluate
-        # it with the different PN names set each time.
-        d.setVar("PN", pkg)
-
-        pn_list_filepath = d.getVar("CYCLONEDX_WORK_DIR_PN_LIST")
-
+        pn_list_filepath = os.path.join(d.getVar("CYCLONEDX_PNDATA"), f"{pkg}.json")
         if not os.path.exists(pn_list_filepath):
+            bb.warn(f"CycloneDX PN file not found: {pn_list_filepath}")
             continue
-
         pn_list = read_json(pn_list_filepath)
+
         image_recipe_names.add(pkg)
         # Merge recipe-level deduplication map into global map
         if "bom_ref_dedup_map" in pn_list:
@@ -818,15 +816,9 @@ def export_cyclonedx(d):
                 alias_map[pkg] = pn_pkg["name"]
 
     for pkg in recipes:
-        # To be able to use the CYCLONEDX_WORK_DIR_PN_LIST variable we have to evaluate
-        # it with the different PN names set each time.
-        d.setVar("PN", pkg)
-
-        pn_list_filepath = d.getVar("CYCLONEDX_WORK_DIR_PN_LIST")
-
+        pn_list_filepath = os.path.join(d.getVar("CYCLONEDX_PNDATA"), f"{pkg}.json")
         if not os.path.exists(pn_list_filepath):
             continue
-
         pn_list = read_json(pn_list_filepath)
 
         for pn_pkg in pn_list["pkgs"]:
@@ -847,15 +839,12 @@ def export_cyclonedx(d):
 
         # Add dependencies
     for pkg in recipes:
-        d.setVar("PN", pkg)
-        pn_list_filepath = d.getVar("CYCLONEDX_WORK_DIR_PN_LIST")
-
+        pn_list_filepath = os.path.join(d.getVar("CYCLONEDX_PNDATA"), f"{pkg}.json")
         if not os.path.exists(pn_list_filepath):
             continue
-
         pn_list = read_json(pn_list_filepath)
-        deps = pn_list.get("dependencies")
 
+        deps = pn_list.get("dependencies")
         if not deps:
             continue
 
@@ -898,8 +887,6 @@ def export_cyclonedx(d):
                 if updated_entry not in sbom["dependencies"]:
                     sbom["dependencies"].append(updated_entry)
 
-    d.setVar("PN", save_pn)
-
     # Replace SBOM serial placeholder in VEX vulnerabilities
     # This must be done after all vulnerabilities are collected to ensure each image
     # gets its own SBOM serial number in multi-output builds (e.g., rootfs + initramfs)
@@ -909,7 +896,6 @@ def export_cyclonedx(d):
                 affect["ref"] = affect["ref"].replace(
                     d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER'), sbom_serial_number)
 
-    from pathlib import Path
     export_dir = d.getVar("CYCLONEDX_EXPORT_DIR")
     tmp_export_dir = d.getVar("CYCLONEDX_TMP_EXPORT_DIR")
     if os.path.exists(tmp_export_dir):
