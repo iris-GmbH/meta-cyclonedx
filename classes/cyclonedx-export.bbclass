@@ -636,13 +636,15 @@ def export_cyclonedx(d):
     global_bom_ref_dedup_map = {}
 
     image_recipe_names = set()
+    pn_lists = {}
     # first loop to fill the dictionary
     for pkg in recipes:
         pn_list_filepath = os.path.join(d.getVar("CYCLONEDX_PNDATA"), f"{pkg}.json")
         if not os.path.exists(pn_list_filepath):
-            bb.warn(f"CycloneDX PN file not found: {pn_list_filepath}")
+            bb.error(f"CycloneDX PN file not found: {pn_list_filepath}")
             continue
-        pn_list = read_json(pn_list_filepath)
+        pn_lists[pkg] = read_json(pn_list_filepath)
+        pn_list = copy.deepcopy(pn_lists[pkg])
 
         image_recipe_names.add(pkg)
         # Merge recipe-level deduplication map into global map
@@ -659,10 +661,7 @@ def export_cyclonedx(d):
                 alias_map[pkg] = pn_pkg["name"]
 
     for pkg in recipes:
-        pn_list_filepath = os.path.join(d.getVar("CYCLONEDX_PNDATA"), f"{pkg}.json")
-        if not os.path.exists(pn_list_filepath):
-            continue
-        pn_list = read_json(pn_list_filepath)
+        pn_list = copy.deepcopy(pn_lists[pkg])
 
         for pn_pkg in pn_list["pkgs"]:
             # Avoid multiple pkgs referencing the same cpe
@@ -682,10 +681,7 @@ def export_cyclonedx(d):
 
         # Add dependencies
     for pkg in recipes:
-        pn_list_filepath = os.path.join(d.getVar("CYCLONEDX_PNDATA"), f"{pkg}.json")
-        if not os.path.exists(pn_list_filepath):
-            continue
-        pn_list = read_json(pn_list_filepath)
+        pn_list = copy.deepcopy(pn_lists[pkg])
 
         deps = pn_list.get("dependencies")
         if not deps:
