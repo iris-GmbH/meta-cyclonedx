@@ -701,7 +701,7 @@ python do_deploy_cyclonedx() {
             # Add scope field to indicate runtime vs build-time component
             # Can be disabled for certain SBOM profiles or tool compatibility
             if d.getVar('CYCLONEDX_ADD_COMPONENT_SCOPES') == "1":
-                pn_pkg["scope"] = "required" if pkg in runtime_recipes else "optional"
+                pn_pkg["scope"] = "required" if pkg in runtime_recipes else "excluded"
 
             sbom["components"].append(pn_pkg)
         for pn_cve in pn_list["cves"]:
