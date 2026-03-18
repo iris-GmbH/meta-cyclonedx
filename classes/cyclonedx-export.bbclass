@@ -570,6 +570,7 @@ def export_cyclonedx(d):
     from datetime import datetime, timezone
     import os
     from pathlib import Path
+    import copy
 
     timestamp = datetime.now(timezone.utc).isoformat()
 
