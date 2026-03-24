@@ -82,26 +82,11 @@ CYCLONEDX_SBOM_SERIAL_PLACEHOLDER = "<SBOM_SERIAL>"
 # This is because we rely on the `check_cves` function from that class to query the NVD.
 inherit_defer ${@ "cve-check" if d.getVar("CYCLONEDX_INCLUDE_UNPATCHED_VULNS") == "1" else ""}
 
-# resolve CVE_CHECK_IGNORE and CVE_STATUS_GROUPS,
-# taken from https://git.yoctoproject.org/poky/commit/meta/classes/cve-check.bbclass?id=be9883a92bad0fe4c1e9c7302c93dea4ac680f8c
-# SPDX-License-Identifier: MIT
-# SPDX-FileCopyrightText: Copyright OpenEmbedded Contributors
 python () {
-    # Fallback all CVEs from CVE_CHECK_IGNORE to CVE_STATUS
-    cve_check_ignore = d.getVar("CVE_CHECK_IGNORE")
-    if cve_check_ignore:
-        bb.warn("CVE_CHECK_IGNORE is deprecated in favor of CVE_STATUS")
-        for cve in (d.getVar("CVE_CHECK_IGNORE") or "").split():
-            d.setVarFlag("CVE_STATUS", cve, "ignored")
+    from oe.cve_check import extend_cve_status
 
-    # Process CVE_STATUS_GROUPS to set multiple statuses and optional detail or description at once
-    for cve_status_group in (d.getVar("CVE_STATUS_GROUPS") or "").split():
-        cve_group = d.getVar(cve_status_group)
-        if cve_group is not None:
-            for cve in cve_group.split():
-                d.setVarFlag("CVE_STATUS", cve, d.getVarFlag(cve_status_group, "status"))
-        else:
-            bb.warn("CVE_STATUS_GROUPS contains undefined variable %s" % cve_status_group)
+    # resolve CVE_CHECK_IGNORE and CVE_STATUS_GROUPS
+    extend_cve_status(d)
 
     # Validate CycloneDX specification version
     spec_version = d.getVar("CYCLONEDX_SPEC_VERSION")
