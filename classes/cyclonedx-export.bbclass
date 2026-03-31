@@ -50,7 +50,7 @@ CYCLONEDX_EXPORT_DIR ??= "${DEPLOY_DIR}/cyclonedx-export"
 CYCLONEDX_EXPORT_SBOM ??= "${CYCLONEDX_EXPORT_DIR}/bom.json"
 CYCLONEDX_EXPORT_VEX ??= "${CYCLONEDX_EXPORT_DIR}/vex.json"
 CYCLONEDX_PNDATA_WORKDIR = "${WORKDIR}/cyclonedx"
-CYCLONEDX_PNDATA = "${TMPDIR}/cyclonedx/pn/${MACHINE}"
+CYCLONEDX_PNDATA = "${TMPDIR}/cyclonedx/pn"
 CYCLONEDX_BUILDTIME_DIR = "${TMPDIR}/cyclonedx/buildtime"
 
 # We need to add the sbom serial number to the list of vulnerabilites for each recipe but
@@ -236,7 +236,8 @@ do_populate_cyclonedx[cleandirs] = "${CYCLONEDX_PNDATA_WORKDIR}"
 do_populate_cyclonedx[vardeps] += "CVE_STATUS"
 SSTATETASKS += "do_populate_cyclonedx"
 do_populate_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_PNDATA_WORKDIR}"
-do_populate_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_PNDATA}"
+do_populate_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_PNDATA}/${SSTATE_PKGARCH}"
+do_populate_cyclonedx[vardeps] += "CYCLONEDX_PNDATA"
 python do_populate_cyclonedx_setscene() {
     sstate_setscene(d)
 }
@@ -653,11 +654,17 @@ def export_cyclonedx(d):
 
     image_recipe_names = set()
     pn_lists = {}
+    pkgarchs = d.getVar("SSTATE_ARCHS").split()
+    pkgarchs.reverse()
     # first loop to fill the dictionary
     for pkg in recipes:
-        pn_list_filepath = os.path.join(d.getVar("CYCLONEDX_PNDATA"), f"{pkg}.json")
+        for pkgarch in pkgarchs:
+            pn_list_filepath = os.path.join(d.getVar("CYCLONEDX_PNDATA"),
+                                            pkgarch, f"{pkg}.json")
+            if os.path.exists(pn_list_filepath):
+                break
         if not os.path.exists(pn_list_filepath):
-            bb.error(f"CycloneDX PN file not found: {pn_list_filepath}")
+            bb.error(f"CycloneDX PN file not found: {pkg}.json")
             continue
         pn_lists[pkg] = read_json(pn_list_filepath)
         pn_list = copy.deepcopy(pn_lists[pkg])
@@ -799,6 +806,7 @@ ROOTFS_POSTUNINSTALL_COMMAND =+ "do_export_cyclonedx; "
 SSTATETASKS += "do_deploy_cyclonedx"
 do_deploy_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_TMP_EXPORT_DIR}"
 do_deploy_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_EXPORT_DIR}"
+do_deploy_cyclonedx[vardeps] += "CYCLONEDX_EXPORT_DIR"
 python do_deploy_cyclonedx_setscene() {
     sstate_setscene(d)
 }
