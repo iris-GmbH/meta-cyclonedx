@@ -225,6 +225,7 @@ python do_populate_cyclonedx() {
 
 addtask do_populate_cyclonedx before do_build
 do_populate_cyclonedx[cleandirs] = "${CYCLONEDX_PNDATA_WORKDIR}"
+do_populate_cyclonedx[vardeps] += "CVE_STATUS"
 SSTATETASKS += "do_populate_cyclonedx"
 do_populate_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_PNDATA_WORKDIR}"
 do_populate_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_PNDATA}"
