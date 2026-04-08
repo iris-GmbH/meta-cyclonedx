@@ -774,7 +774,7 @@ def export_cyclonedx(d):
         recipes = runtime_recipes
     else:
         all_available = {pn for pn in os.listdir(cyclonedx_buildtime_dir)
-                        if os.path.isdir(os.path.join(cyclonedx_buildtime_dir, pn))}
+                        if os.path.exists(os.path.join(cyclonedx_buildtime_dir, pn))}
         recipes = all_available.union(runtime_recipes)
 
     # Create a bom_ref_map for dependencies sanitarization
