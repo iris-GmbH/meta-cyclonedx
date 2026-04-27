@@ -279,9 +279,19 @@ addtask do_deploy_cyclonedx after do_deploy before do_build
 
 ## Usage
 
+> :warning: By default scarthgap only supports building a single image in a
+> build run, since subsequent image builds will override the output files.
+> This has been fixed on newer Yocto versions, but since changing the
+> output path would be a breaking change we decided to keep the current behavior
+> on scarthgap as is.
+>
+> If you need support for multiple image builds in scarthgap, please override the
+> `CYCLONEDX_EXPORT_DIR` variable in your project config (e.g. local.conf) to
+> include the package name, e.g.: `${DEPLOY_DIR}/${PN}/cyclonedx-export`.
+
 Once everything is configured simply build your image as you normally would.
 By default the final CycloneDX SBOMs are saved to the folder
-`${DEPLOY_DIR}/${PN}/cyclonedx-export` as `bom.json` and `vex.json`
+`${DEPLOY_DIR}/cyclonedx-export` as `bom.json` and `vex.json`
 respectively.
 
 ## Uploading to DependencyTrack (tested against DT v4.11.4)
