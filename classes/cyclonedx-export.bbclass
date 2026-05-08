@@ -495,6 +495,10 @@ def append_to_vex(d, cve, cves, bom_ref):
             if cve_id != normalized_cve_id:  # Only if there was a suffix
                 existing_cve["analysis"]["detail"] += f"Additional patch: {cve_id}\n"
             bb.debug(2, f"CVE {normalized_cve_id} already recorded, updated details")
+            # record additional bom reference if unique
+            if not any(existing_bom_ref["ref"].endswith(bom_ref)
+                    for existing_bom_ref in existing_cve["affects"]):
+                existing_cve["affects"].append({"ref": f"urn:cdx:{d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER')}/1#{bom_ref}"})
             return
 
     detail_string = ""
