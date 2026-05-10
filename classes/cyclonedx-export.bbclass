@@ -60,6 +60,9 @@ CYCLONEDX_ADD_CITATION ??= "1"
 # See: https://www.cisa.gov/tlp
 CYCLONEDX_TLP_MARKING ??= ""
 
+# kernel CVE filtering
+CYCLONEDX_IMPROVE_KERNEL_CVE_REPORT ??= "0"
+
 CYCLONEDX_TMP_EXPORT_DIR = "${WORKDIR}/cyclonedx-export"
 CYCLONEDX_EXPORT_DIR ??= "${DEPLOY_DIR_IMAGE}"
 # Try to set meaningful default filenames for both image and non-image recipes
@@ -959,4 +962,122 @@ python do_deploy_cyclonedx() {
 python () {
     if bb.data.inherits_class("image", d):
         bb.build.addtask("do_deploy_cyclonedx", "do_image_complete", "do_rootfs", d)
+}
+
+####
+# filter results for kernel based on compiled sources
+
+# Extract source and header files from lines from .cmd files
+def filter_lines(srcdir, lines, compfiles):
+    for line in lines:
+        if line.startswith("source_"):
+            tmp = line.split(":=")
+            compfiles.add(tmp[1].replace(srcdir, '').replace('../', ''))
+        elif line.startswith("deps_") and not line.startswith("deps_config "):
+            tmp = line.split(":=")
+            files = tmp[1].split(" ")
+            for f in files:
+                compfiles.add(f.replace(srcdir, '').replace('../', ''))
+
+
+def make_complist(d):
+    import os
+
+    builddir = d.getVar("B")
+    srcdir = d.getVar("STAGING_KERNEL_DIR") + "/"
+    workdir = d.getVar("WORKDIR")
+    compfiles = set()
+    cmdfiles = []
+    for root, dirnames, filenames, in os.walk(builddir):
+        for fn in filenames:
+            if fn.endswith(".cmd"):
+                cmdfiles.append(f"{root}/{fn}")
+
+    compfiles = set()
+    for cmdf in cmdfiles:
+        with open(cmdf, 'r') as f:
+            lines = []
+            current = ""
+            for line in f:
+                # Merge lines that end with \ while skipping "$(wildcard..."
+                # These wildcards lines resolve to empty files that are used
+                # as Kconfig markers of enabled features. We can ignore them.
+                line = line.rstrip("\n").rstrip()
+                if line.endswith("\\"):
+                    if "$(wildcard" not in line:
+                        current += line[:-1].strip() + " "
+                else:
+                    if line != "":
+                        current += line
+
+                    lines.append(current.strip())
+                    current = ""
+
+            filter_lines(srcdir, lines, compfiles)
+
+    compfiles = sorted(compfiles)
+    with open(f"{workdir}/linux-kernel-compile-list.txt", "w") as f:
+        for cf in compfiles:
+            f.write(cf+"\n")
+
+
+def run_kernel_cve_report(d):
+    import subprocess
+    workdir = d.getVar("WORKDIR")
+    unpackdir = d.getVar("UNPACKDIR")
+    layerdir = d.getVar("CYCLONEDX_LAYERDIR")
+    script = os.path.join(layerdir, "meta/files/improve_kernel_cve_report.py")
+    complist = os.path.join(workdir, "linux-kernel-compile-list.txt")
+    datadir = os.path.join(unpackdir, "vulns")
+    cvereport = os.path.join(workdir, "cve-report.json")
+
+    subprocess.check_call(["python3", script,
+                           "-C", complist,
+                           "--datadir", datadir,
+                           "--kernel-version", d.getVar("PV"),
+                           "--new-cve-report", cvereport])
+
+
+def append_cve_status(d):
+    import json
+    detail_map = {
+        "version-not-in-range": "cpe-incorrect",
+        "fixed-version": "fixed-version",
+        "cpe-stable-backport": "backported-patch",
+        "not-applicable-config": "not-applicable-config",
+        "rejected": "upstream-wontfix",
+    }
+    workdir = d.getVar("WORKDIR")
+    cvereport = os.path.join(workdir, "cve-report.json")
+    with open(cvereport, 'r') as f:
+        report = json.load(f)
+
+    # Convert the improve_kernel_cve_report.py CVE statuses to what Bitbake can handle
+    for vuln in report["package"][0]["issue"]:
+        status = vuln["status"]
+        cveid = vuln["id"]
+        detail = vuln["detail"]
+        if status == "Unpatched":
+            continue
+        detail = detail_map.get(detail, detail)
+        d.setVarFlag("CVE_STATUS", cveid, detail)
+
+
+python do_populate_cyclonedx:prepend() {
+    if d.getVar("CYCLONEDX_IMPROVE_KERNEL_CVE_REPORT") == "1":
+        make_complist(d)
+        run_kernel_cve_report(d)
+        append_cve_status(d)
+}
+
+python () {
+    provides = d.getVar("PROVIDES") or ""
+    if "virtual/kernel" in provides.split() and d.getVar("CYCLONEDX_IMPROVE_KERNEL_CVE_REPORT") == "1":
+        d.appendVar("SRC_URI", " git://git.kernel.org/pub/scm/linux/security/vulns.git;protocol=https;branch=master;name=vulns;destsuffix=vulns")
+        d.appendVar("SRCREV_FORMAT", "_vulns")
+        d.setVar("SRCREV_vulns", "master")
+        # creation of .cmd files must complete before do_populate_cyclonedx executes
+        d.appendVarFlag("do_populate_cyclonedx", "recrdeptask", "do_install");
+    else:
+        d.setVar("CYCLONEDX_IMPROVE_KERNEL_CVE_REPORT", "0")
 }
