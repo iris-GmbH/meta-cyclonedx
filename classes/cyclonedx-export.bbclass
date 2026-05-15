@@ -41,6 +41,11 @@ CYCLONEDX_UNPATCHED_VULNS_STATE ??= "in_triage"
 
 CYCLONEDX_RUNTIME_PACKAGES_ONLY ??= "1"
 
+# Space-separated list of recipe names to include in the SBOM regardless of
+# whether they produce rootfs packages. Use this for components that are
+# embedded directly into the image (e.g. OP-TEE inside a fitImage).
+CYCLONEDX_EXTRA_RUNTIME_RECIPES ??= ""
+
 # Add component licenses (as specified within the recipe) to the SBOM
 CYCLONEDX_ADD_COMPONENT_LICENSES ??= "1"
 
@@ -783,6 +788,10 @@ def export_cyclonedx(d):
                         if os.path.exists(os.path.join(cyclonedx_buildtime_dir, pn))}
         recipes = all_available.union(runtime_recipes)
 
+    # Always include explicitly requested recipes (e.g. optee-os embedded in fitImage)
+    extra_recipes = set((d.getVar('CYCLONEDX_EXTRA_RUNTIME_RECIPES') or '').split())
+    recipes = recipes.union(extra_recipes)
+
     # Create a bom_ref_map for dependencies sanitarization
     # And an alias_map to retrieve real pkg name
     bom_ref_map = {}
@@ -832,7 +841,7 @@ def export_cyclonedx(d):
             # Add scope field to indicate runtime vs build-time component
             # Can be disabled for certain SBOM profiles or tool compatibility
             if d.getVar('CYCLONEDX_ADD_COMPONENT_SCOPES') == "1":
-                pn_pkg["scope"] = "required" if pkg in runtime_recipes else "excluded"
+                pn_pkg["scope"] = "required" if pkg in runtime_recipes or pkg in extra_recipes else "excluded"
 
             sbom["components"].append(pn_pkg)
         for pn_cve in pn_list["cves"]:
