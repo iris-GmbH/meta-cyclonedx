@@ -87,6 +87,26 @@ all build-time packages as well:
 CYCLONEDX_RUNTIME_PACKAGES_ONLY = "0"
 ```
 
+### Extra Runtime Recipes
+
+Some components are embedded directly into the image without going through the
+normal package installation process (e.g. OP-TEE compiled into a fitImage).
+Because these recipes do not produce rootfs packages, they are not detected by
+the standard runtime package discovery and would either be omitted (when
+`CYCLONEDX_RUNTIME_PACKAGES_ONLY = "1"`) or included only as build-time
+components with `scope = "optional"`/`"excluded"`.
+
+Use `CYCLONEDX_EXTRA_RUNTIME_RECIPES` to explicitly list such recipes so that
+they are always included in the SBOM with `scope = "required"`:
+
+```sh
+CYCLONEDX_EXTRA_RUNTIME_RECIPES = "optee-os trusted-firmware-a"
+```
+
+Multiple recipe names are separated by spaces. Each listed recipe must have
+already run `do_populate_cyclonedx` during the build, otherwise an error is
+raised and the recipe is skipped.
+
 ### Component Scopes
 
 When including both runtime and build-time packages, meta-cyclonedx uses
@@ -236,6 +256,10 @@ CYCLONEDX_INCLUDE_UNPATCHED_VULNS = "1"
 # State to assign to unpatched vulnerabilities (default: "in_triage").
 # Can be empty to omit the state field.
 CYCLONEDX_UNPATCHED_VULNS_STATE = "in_triage"
+
+# Space-separated list of recipes to always include with scope "required",
+# even if they do not produce rootfs packages (default: "").
+CYCLONEDX_EXTRA_RUNTIME_RECIPES = ""
 ```
 
 ### Use with non-rootfs image recipes
