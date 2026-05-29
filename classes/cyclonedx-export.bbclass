@@ -77,6 +77,7 @@ IMAGE_LINK_NAME ??= ""
 CYCLONEDX_EXPORT_SBOM_LINK ??= "${@'${IMAGE_LINK_NAME}.cyclonedx.bom.json' if d.getVar('IMAGE_LINK_NAME') else ''}"
 CYCLONEDX_EXPORT_VEX_LINK ??= "${@'${IMAGE_LINK_NAME}.cyclonedx.vex.json' if d.getVar('IMAGE_LINK_NAME') else ''}"
 CYCLONEDX_PNDATA_WORKDIR = "${WORKDIR}/cyclonedx"
+CYCLONEDX_BUILDTIME_WORKDIR = "${WORKDIR}/cyclonedx-buildtime"
 CYCLONEDX_PNDATA = "${TMPDIR}/cyclonedx/pn"
 CYCLONEDX_BUILDTIME_DIR = "${TMPDIR}/cyclonedx/buildtime"
 
@@ -226,16 +227,16 @@ python do_populate_cyclonedx() {
     write_json(os.path.join(d.getVar("CYCLONEDX_PNDATA_WORKDIR"), f"{pn}.json"), pn_list)
 
     if not bb.utils.to_boolean(d.getVar("CYCLONEDX_RUNTIME_PACKAGES_ONLY")):
-        Path(os.path.join(d.getVar("CYCLONEDX_BUILDTIME_DIR"), pn)).touch()
+        Path(os.path.join(d.getVar("CYCLONEDX_BUILDTIME_WORKDIR"), pn)).touch()
 }
 
 addtask do_populate_cyclonedx before do_build
-do_populate_cyclonedx[cleandirs] = "${CYCLONEDX_PNDATA_WORKDIR}"
+do_populate_cyclonedx[cleandirs] = "${CYCLONEDX_PNDATA_WORKDIR} ${CYCLONEDX_BUILDTIME_WORKDIR}"
 do_populate_cyclonedx[vardeps] += "CVE_STATUS"
 SSTATETASKS += "do_populate_cyclonedx"
-do_populate_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_PNDATA_WORKDIR}"
-do_populate_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_PNDATA}/${SSTATE_PKGARCH}"
-do_populate_cyclonedx[vardeps] += "CYCLONEDX_PNDATA"
+do_populate_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_PNDATA_WORKDIR} ${CYCLONEDX_BUILDTIME_WORKDIR}"
+do_populate_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_PNDATA}/${SSTATE_PKGARCH} ${CYCLONEDX_BUILDTIME_DIR}/${SSTATE_PKGARCH}"
+do_populate_cyclonedx[vardeps] += "CYCLONEDX_PNDATA CYCLONEDX_BUILDTIME_DIR CYCLONEDX_BUILDTIME_WORKDIR"
 python do_populate_cyclonedx_setscene() {
     sstate_setscene(d)
 }
@@ -282,6 +283,33 @@ def iterate_cyclonedx_storage_arches(d, storage_dir):
         if arch and arch not in seen:
             seen.add(arch)
             yield arch
+
+def list_cyclonedx_buildtime_recipes(d):
+    """
+    List all recipes for which we have build-time information, by looking at the buildtime storage directory.
+    """
+
+    import os
+
+    buildtime_dir = d.getVar("CYCLONEDX_BUILDTIME_DIR")
+    recipes = set()
+
+    if os.path.isdir(buildtime_dir):
+        recipes.update(
+            entry for entry in os.listdir(buildtime_dir)
+            if os.path.isfile(os.path.join(buildtime_dir, entry))
+        )
+
+    for pkgarch in iterate_cyclonedx_storage_arches(d, buildtime_dir):
+        pkgarch_dir = os.path.join(buildtime_dir, pkgarch)
+        if not os.path.isdir(pkgarch_dir):
+            continue
+        recipes.update(
+            entry for entry in os.listdir(pkgarch_dir)
+            if os.path.isfile(os.path.join(pkgarch_dir, entry))
+        )
+
+    return recipes
 
 def convert_to_spdx_license(d, spdx_license_ids):
     """
@@ -809,8 +837,7 @@ def export_cyclonedx(d):
     if d.getVar('CYCLONEDX_RUNTIME_PACKAGES_ONLY') == "1":
         recipes = runtime_recipes
     else:
-        all_available = {pn for pn in os.listdir(cyclonedx_buildtime_dir)
-                        if os.path.exists(os.path.join(cyclonedx_buildtime_dir, pn))}
+        all_available = list_cyclonedx_buildtime_recipes(d)
         recipes = all_available.union(runtime_recipes)
 
     # Always include explicitly requested recipes (e.g. optee-os embedded in fitImage)
