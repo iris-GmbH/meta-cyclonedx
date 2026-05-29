@@ -3,6 +3,7 @@
 # SPDX-FileCopyrightText: Copyright (C) 2024 Savoir-faire Linux Inc. (<www.savoirfairelinux.com>).
 # SPDX-FileCopyrightText: Copyright (C) 2024 iris-GmbH infrared & intelligent sensors.
 # SPDX-FileCopyrightText: Copyright (C) 2025 balena, inc.
+# SPDX-FileCopyrightText: Copyright (C) 2026 Lawo AG.
 
 # The product name that the CVE database uses.  Defaults to BPN, but may need to
 # be overriden per recipe (for example tiff.bb sets CVE_PRODUCT=libtiff).
@@ -257,6 +258,30 @@ def write_json(path, content):
     Path(path).write_text(
         json.dumps(content, indent=2)
     )
+
+def iterate_cyclonedx_storage_arches(d, storage_dir):
+    """
+    Iterate over architecture identifiers in order of preference for the current build, falling back to any other
+    architectures found in the storage directory, such as "all" for packages that are architecture independent.
+    """
+
+    import os
+
+    preferred_arches = (d.getVar("SSTATE_ARCHS") or "").split()
+    preferred_arches.reverse()
+
+    available_arches = []
+    if os.path.isdir(storage_dir):
+        available_arches = sorted(
+            arch for arch in os.listdir(storage_dir)
+            if os.path.isdir(os.path.join(storage_dir, arch))
+        )
+
+    seen = set()
+    for arch in preferred_arches + available_arches:
+        if arch and arch not in seen:
+            seen.add(arch)
+            yield arch
 
 def convert_to_spdx_license(d, spdx_license_ids):
     """
@@ -812,17 +837,20 @@ def export_cyclonedx(d):
 
     image_recipe_names = set()
     pn_lists = {}
-    pkgarchs = d.getVar("SSTATE_ARCHS").split()
-    pkgarchs.reverse()
+    missing_pn_lists = []
+    pn_data_dir = d.getVar("CYCLONEDX_PNDATA")
+    pkgarchs = list(iterate_cyclonedx_storage_arches(d, pn_data_dir))
+
     # first loop to fill the dictionary
     for pkg in recipes:
+        pn_list_filepath = None
         for pkgarch in pkgarchs:
-            pn_list_filepath = os.path.join(d.getVar("CYCLONEDX_PNDATA"),
-                                            pkgarch, f"{pkg}.json")
-            if os.path.exists(pn_list_filepath):
+            candidate = os.path.join(pn_data_dir, pkgarch, f"{pkg}.json")
+            if os.path.exists(candidate):
+                pn_list_filepath = candidate
                 break
-        if not os.path.exists(pn_list_filepath):
-            bb.error(f"CycloneDX PN file not found: {pkg}.json")
+        if pn_list_filepath is None:
+            missing_pn_lists.append(pkg)
             continue
         pn_lists[pkg] = read_json(pn_list_filepath)
         pn_list = copy.deepcopy(pn_lists[pkg])
@@ -840,6 +868,10 @@ def export_cyclonedx(d):
             # Only map once, to the first/primary package.
             if pkg not in alias_map:
                 alias_map[pkg] = pn_pkg["name"]
+
+    if missing_pn_lists:
+        missing_files = ", ".join(f"{pkg}.json" for pkg in sorted(missing_pn_lists))
+        bb.fatal(f"CycloneDX PN file not found: {missing_files}")
 
     for pkg in recipes:
         pn_list = copy.deepcopy(pn_lists[pkg])
@@ -860,7 +892,7 @@ def export_cyclonedx(d):
             # This fixes multi-output builds where shared components would get the wrong serial
             vex["vulnerabilities"].append(pn_cve)
 
-        # Add dependencies
+    # Add dependencies
     for pkg in recipes:
         pn_list = copy.deepcopy(pn_lists[pkg])
 
