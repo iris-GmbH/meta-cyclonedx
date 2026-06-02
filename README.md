@@ -347,19 +347,12 @@ e.g. as part of a CI job that runs after your build is complete.
 
 This is possible by leveraging DependencyTracks REST API.
 
-At the time of writing this can be done by leveraging the following API
-endpoints:
-
-1. `/v1/bom` for uploading the `bom.json`.
-2. `/v1/event/token/{uuid}` for checking the status on the `bom.json`
-   processing.
-3. `/v1/vex` for uploading the `vex.json`.
-
 Please refer to [DependencyTracks REST API documentation](https://docs.dependencytrack.org/integrations/rest-api/)
 regarding the usage of these endpoints as well as the required token
 permissions.
 
-In the future we might include an example script in this repository.
+An example python script can be found at
+`examples/automated-dependencytrack-upload.py` and may be freely used (CC0-1.0).
 
 ## Known Limitations
 
