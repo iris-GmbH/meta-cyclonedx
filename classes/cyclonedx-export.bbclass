@@ -655,7 +655,18 @@ def export_cyclonedx(d):
         recipes = all_available.union(runtime_recipes)
 
     # Always include explicitly requested recipes (e.g. optee-os embedded in fitImage)
-    extra_recipes = set((d.getVar('CYCLONEDX_EXTRA_RUNTIME_RECIPES') or '').split())
+    # Resolve virtual/* entries via PREFERRED_PROVIDER_*
+    extra_recipes = set()
+    for recipe in (d.getVar('CYCLONEDX_EXTRA_RUNTIME_RECIPES') or '').split():
+        if recipe.startswith("virtual/"):
+            resolved = (d.getVar("PREFERRED_RPROVIDER_" + recipe)
+                        or d.getVar("PREFERRED_PROVIDER_" + recipe))
+            if not resolved:
+                bb.warn(f"CYCLONEDX_EXTRA_RUNTIME_RECIPES: no provider for {recipe}, skipping")
+                continue
+            bb.debug(2, f"CYCLONEDX_EXTRA_RUNTIME_RECIPES: resolved {recipe} -> {resolved}")
+            recipe = resolved
+        extra_recipes.add(recipe)
     recipes = recipes.union(extra_recipes)
 
     # Create a bom_ref_map for dependencies sanitarization
