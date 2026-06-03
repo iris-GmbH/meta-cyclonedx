@@ -281,6 +281,8 @@ def convert_to_spdx_license(d, spdx_license_ids):
             oe_licenses_split[i] = " AND "
         elif elem == "|":
             oe_licenses_split[i] = " OR "
+        elif elem == "CLOSED":
+            oe_licenses_split[i] = "NOASSERTION"
         else:
             elem = d.getVarFlag("SPDXLICENSEMAP", elem) or elem
             if elem not in spdx_license_ids:
@@ -418,6 +420,11 @@ def resolve_license_data(d):
     # otherwise this is a single license entry or consists only of "AND" connections
     # which we can split this into multiple license entries (if feature enabled)
     for license in licenses.split(" AND "):
+        if license == "NONE" or license == "NOASSERTION":
+            bb.debug(2, f"Adding {license} as special case license.")
+            license_info.append({"expression": license})
+            continue
+
         if license in spdx_license_ids:
             bb.debug(2, f"Adding {license} as known SPDX license.")
             license_info.append({"license": {"id": license}})
