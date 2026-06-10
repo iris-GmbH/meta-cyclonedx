@@ -286,10 +286,14 @@ def iterate_cyclonedx_storage_arches(d, storage_dir):
 
 def list_cyclonedx_buildtime_recipes(d):
     """
-    List all recipes for which we have build-time information, by looking at the buildtime storage directory.
+    List build-time recipes, either from the task dependency graph, or falling
+    back to buildtime marker files.
     """
-
     import os
+
+    from_taskdeps = list_cyclonedx_buildtime_recipes_from_taskdeps(d)
+    if from_taskdeps is not None:
+        return from_taskdeps
 
     buildtime_dir = d.getVar("CYCLONEDX_BUILDTIME_DIR")
     recipes = set()
@@ -310,6 +314,31 @@ def list_cyclonedx_buildtime_recipes(d):
         )
 
     return recipes
+
+def list_cyclonedx_buildtime_recipes_from_taskdeps(d):
+    """
+    List build-time recipes from the current task dependency graph.
+    This keeps incremental rebuilds accurate because BB_TASKDEPDATA includes
+    the full do_rootfs dependency set, even for recipes restored from sstate.
+    """
+
+    taskdepdata = d.getVar("BB_TASKDEPDATA", False)
+    if not taskdepdata:
+        return None
+
+    ignored_suffixes = tuple((d.getVar("SPECIAL_PKGSUFFIX") or "").split())
+    recipes = set()
+
+    for dep_data in taskdepdata.values():
+        if dep_data.taskname != "do_populate_cyclonedx":
+            continue
+        pn = dep_data.pn
+        if pn and not any(pn.endswith(suffix) for suffix in ignored_suffixes):
+            recipes.add(pn)
+
+    return recipes or None
+
+list_cyclonedx_buildtime_recipes_from_taskdeps[vardepsexclude] += "BB_TASKDEPDATA"
 
 def convert_to_spdx_license(d, spdx_license_ids):
     """
@@ -786,8 +815,6 @@ def export_cyclonedx(d):
 
     # Get configured spec version
     spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
-
-    cyclonedx_buildtime_dir = d.getVar("CYCLONEDX_BUILDTIME_DIR")
 
     # Generate sbom document header
     bb.debug(2, f"Creating empty temporary sbom file with serial number {sbom_serial_number}")
