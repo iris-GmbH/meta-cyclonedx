@@ -28,13 +28,6 @@ CYCLONEDX_ADD_COMPONENT_SCOPES ??= "1"
 # Available in CycloneDX 1.6
 CYCLONEDX_ADD_VULN_TIMESTAMPS ??= "1"
 
-# Include unpatched vulnerabilities in VEX.
-# If enabled, the cve-check class is inherited to query the NVD.
-# Note that querying the NVD happens at the time of running the
-# task, which currently requires rootfs generation. You may
-# want to use external tools for regular analysis.
-CYCLONEDX_INCLUDE_UNPATCHED_VULNS ??= "0"
-
 # State to assign to unpatched vulnerabilities.
 # Can be empty to omit the state field.
 CYCLONEDX_UNPATCHED_VULNS_STATE ??= "in_triage"
@@ -83,10 +76,6 @@ CYCLONEDX_BUILDTIME_DIR = "${TMPDIR}/cyclonedx/buildtime"
 # don't know it until after we generate the sbom export header file
 CYCLONEDX_SBOM_SERIAL_PLACEHOLDER = "<SBOM_SERIAL>"
 
-# If unpatched vulnerabilities are to be included, we need to inherit the cve-check class.
-# This is because we rely on the `check_cves` function from that class to query the NVD.
-inherit_defer ${@ "cve-check" if d.getVar("CYCLONEDX_INCLUDE_UNPATCHED_VULNS") == "1" else ""}
-
 python () {
     from oe.cve_check import extend_cve_status
 
@@ -97,6 +86,9 @@ python () {
     spec_version = d.getVar("CYCLONEDX_SPEC_VERSION")
     if spec_version not in ["1.4", "1.6", "1.7"]:
         bb.fatal(f"Unsupported CYCLONEDX_SPEC_VERSION: {spec_version}. Supported versions: 1.4, 1.6, 1.7")
+
+    if d.getVar("CYCLONEDX_INCLUDE_UNPATCHED_VULNS") == "1":
+        bb.warn(f"meta-cyclonedx: Option CYCLONEDX_INCLUDE_UNPATCHED_VULNS has been removed post-Wrynose")
 }
 
 # Clean out buildtime dir to prepare for creating complete list of build-time package information
@@ -171,29 +163,6 @@ python do_populate_cyclonedx() {
             )
             append_to_vex(d, cve, cves, bom_ref)
 
-        # The check_cves function is coming from the cve-check class
-        # that we conditionally inherit to query the NVD.
-        if d.getVar("CYCLONEDX_INCLUDE_UNPATCHED_VULNS") == "1" and os.path.exists(d.getVar("CVE_CHECK_DB_FILE")):
-            with bb.utils.fileslocked([d.getVar("CVE_CHECK_DB_FILE_LOCK")], shared=True):
-                bb.debug(2, f"Querying CVE database for unpatched CVEs for package {pn}")
-
-                # Turn off warnings and restore afterwards
-                cve_check_show_warnings_original = d.getVar("CVE_CHECK_SHOW_WARNINGS")
-                d.setVar("CVE_CHECK_SHOW_WARNINGS", "0")
-                cve_data, _ = check_cves(d, patched_cves)
-                d.setVar("CVE_CHECK_SHOW_WARNINGS", cve_check_show_warnings_original)
-
-                unpatched_cve_ids = [cve_id for cve_id, data in cve_data.items() if data["abbrev-status"] == "Unpatched"]
-                bb.debug(2, f"Found {len(unpatched_cve_ids)} unpatched CVEs for package {pn}")
-                for cve_id in unpatched_cve_ids:
-                    cve = (
-                        cve_id,
-                        "Unpatched",
-                        "no-fix-supplied",
-                        ""
-                    )
-                    append_to_vex(d, cve, cves, bom_ref)
-
     # append any cve status within recipe to pn_list cves
     pn_list["cves"] = cves
 
@@ -239,10 +208,6 @@ python do_populate_cyclonedx_setscene() {
     sstate_setscene(d)
 }
 addtask do_populate_cyclonedx_setscene
-
-# We cannot set nostamp on do_populate_cyclonedx conditionally due to YP bug #13808.
-# Instead, we conditionally include a file.
-require ${@ "include/include-unpatched.inc" if d.getVar("CYCLONEDX_INCLUDE_UNPATCHED_VULNS") == "1" else ""}
 
 do_rootfs[recrdeptask] += "do_populate_cyclonedx"
 
@@ -620,8 +585,6 @@ def append_to_vex(d, cve, cves, bom_ref):
     # Normalize CVE ID to remove patch file suffixes (e.g., CVE-2025-52886-0001 -> CVE-2025-52886)
     normalized_cve_id = normalize_cve_id(cve_id)
 
-    include_unpatched = d.getVar("CYCLONEDX_INCLUDE_UNPATCHED_VULNS") == "1"
-
     # See https://docs.yoctoproject.org/singleindex.html#term-CVE_CHECK_STATUSMAP for possible statuses.
     if abbrev_status == "Patched":
         bb.debug(2, f"Found patch for {normalized_cve_id} in {d.getVar('BPN')}")
@@ -629,9 +592,6 @@ def append_to_vex(d, cve, cves, bom_ref):
     elif abbrev_status == "Ignored":
         bb.debug(2, f"Found ignore statement for {normalized_cve_id} in {d.getVar('BPN')}")
         vex_state = "not_affected"
-    elif abbrev_status == "Unpatched" and include_unpatched:
-        bb.debug(2, f"Found unpatched status for {normalized_cve_id} in {d.getVar('BPN')}")
-        vex_state = d.getVar("CYCLONEDX_UNPATCHED_VULNS_STATE")
     else:
         bb.debug(2, f"Found unknown or irrelevant CVE status {abbrev_status} for {normalized_cve_id} in {d.getVar('BPN')}. Skipping...")
         return

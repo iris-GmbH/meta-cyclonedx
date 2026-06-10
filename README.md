@@ -51,6 +51,10 @@ BBLAYERS += "${BSPDIR}/sources/meta-cyclonedx"
 
 ## Configuration
 
+> **:warning: Breaking change when upgrading to Wrynose or later:**
+> Starting with Wrynose the `CYCLONEDX_INCLUDE_UNPATCHED_VULNS` option is not
+> available. For more details, see [this issue](https://github.com/iris-GmbH/meta-cyclonedx/issues/97)
+
 To enable and configure the layer simply inherit the `cyclonedx-export` class
 in your `local.conf` file:
 
@@ -321,17 +325,6 @@ CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS = "1"
 CYCLONEDX_ADD_LICENSE_DETAILS = "1"  # Include license text for custom licenses
 CYCLONEDX_ADD_CITATION = "1"         # Document SBOM provenance
 CYCLONEDX_TLP_MARKING = ""           # TLP marking (CLEAR|GREEN|AMBER|AMBER_STRICT|RED)
-
-# Include unpatched vulnerabilities in VEX (default: "0").
-# If enabled, the cve-check class is inherited to query the NVD.
-# Note that querying the NVD happens at the time of running the
-# task, which currently requires rootfs generation. You may
-# want to use external tools such as DependencyTrack for regular analysis.
-CYCLONEDX_INCLUDE_UNPATCHED_VULNS = "1"
-
-# State to assign to unpatched vulnerabilities (default: "in_triage").
-# Can be empty to omit the state field.
-CYCLONEDX_UNPATCHED_VULNS_STATE = "in_triage"
 
 # Space-separated list of recipes to always include with scope "required",
 # even if they do not produce rootfs packages (default: "").
