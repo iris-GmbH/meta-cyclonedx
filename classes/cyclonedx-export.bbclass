@@ -3,6 +3,7 @@
 # SPDX-FileCopyrightText: Copyright (C) 2024 Savoir-faire Linux Inc. (<www.savoirfairelinux.com>).
 # SPDX-FileCopyrightText: Copyright (C) 2024 iris-GmbH infrared & intelligent sensors.
 # SPDX-FileCopyrightText: Copyright (C) 2025 balena, inc.
+# SPDX-FileCopyrightText: Copyright (C) 2026 Lawo AG.
 
 # The product name that the CVE database uses.  Defaults to BPN, but may need to
 # be overriden per recipe (for example tiff.bb sets CVE_PRODUCT=libtiff).
@@ -69,6 +70,7 @@ IMAGE_LINK_NAME ??= ""
 CYCLONEDX_EXPORT_SBOM_LINK ??= "${@'${IMAGE_LINK_NAME}.cyclonedx.bom.json' if d.getVar('IMAGE_LINK_NAME') else ''}"
 CYCLONEDX_EXPORT_VEX_LINK ??= "${@'${IMAGE_LINK_NAME}.cyclonedx.vex.json' if d.getVar('IMAGE_LINK_NAME') else ''}"
 CYCLONEDX_PNDATA_WORKDIR = "${WORKDIR}/cyclonedx"
+CYCLONEDX_BUILDTIME_WORKDIR = "${WORKDIR}/cyclonedx-buildtime"
 CYCLONEDX_PNDATA = "${TMPDIR}/cyclonedx/pn"
 CYCLONEDX_BUILDTIME_DIR = "${TMPDIR}/cyclonedx/buildtime"
 
@@ -194,16 +196,16 @@ python do_populate_cyclonedx() {
     write_json(os.path.join(d.getVar("CYCLONEDX_PNDATA_WORKDIR"), f"{pn}.json"), pn_list)
 
     if not bb.utils.to_boolean(d.getVar("CYCLONEDX_RUNTIME_PACKAGES_ONLY")):
-        Path(os.path.join(d.getVar("CYCLONEDX_BUILDTIME_DIR"), pn)).touch()
+        Path(os.path.join(d.getVar("CYCLONEDX_BUILDTIME_WORKDIR"), pn)).touch()
 }
 
 addtask do_populate_cyclonedx before do_build
-do_populate_cyclonedx[cleandirs] = "${CYCLONEDX_PNDATA_WORKDIR}"
+do_populate_cyclonedx[cleandirs] = "${CYCLONEDX_PNDATA_WORKDIR} ${CYCLONEDX_BUILDTIME_WORKDIR}"
 do_populate_cyclonedx[vardeps] += "CVE_STATUS"
 SSTATETASKS += "do_populate_cyclonedx"
-do_populate_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_PNDATA_WORKDIR}"
-do_populate_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_PNDATA}/${SSTATE_PKGARCH}"
-do_populate_cyclonedx[vardeps] += "CYCLONEDX_PNDATA"
+do_populate_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_PNDATA_WORKDIR} ${CYCLONEDX_BUILDTIME_WORKDIR}"
+do_populate_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_PNDATA}/${SSTATE_PKGARCH} ${CYCLONEDX_BUILDTIME_DIR}/${SSTATE_PKGARCH}"
+do_populate_cyclonedx[vardeps] += "CYCLONEDX_PNDATA CYCLONEDX_BUILDTIME_DIR CYCLONEDX_BUILDTIME_WORKDIR"
 python do_populate_cyclonedx_setscene() {
     sstate_setscene(d)
 }
@@ -222,6 +224,86 @@ def write_json(path, content):
     Path(path).write_text(
         json.dumps(content, indent=2)
     )
+
+def iterate_cyclonedx_storage_arches(d, storage_dir):
+    """
+    Iterate over architecture identifiers in order of preference for the current build, falling back to any other
+    architectures found in the storage directory, such as "all" for packages that are architecture independent.
+    """
+
+    import os
+
+    preferred_arches = (d.getVar("SSTATE_ARCHS") or "").split()
+    preferred_arches.reverse()
+
+    available_arches = []
+    if os.path.isdir(storage_dir):
+        available_arches = sorted(
+            arch for arch in os.listdir(storage_dir)
+            if os.path.isdir(os.path.join(storage_dir, arch))
+        )
+
+    seen = set()
+    for arch in preferred_arches + available_arches:
+        if arch and arch not in seen:
+            seen.add(arch)
+            yield arch
+
+def list_cyclonedx_buildtime_recipes(d):
+    """
+    List build-time recipes, either from the task dependency graph, or falling
+    back to buildtime marker files.
+    """
+    import os
+
+    from_taskdeps = list_cyclonedx_buildtime_recipes_from_taskdeps(d)
+    if from_taskdeps is not None:
+        return from_taskdeps
+
+    buildtime_dir = d.getVar("CYCLONEDX_BUILDTIME_DIR")
+    recipes = set()
+
+    if os.path.isdir(buildtime_dir):
+        recipes.update(
+            entry for entry in os.listdir(buildtime_dir)
+            if os.path.isfile(os.path.join(buildtime_dir, entry))
+        )
+
+    for pkgarch in iterate_cyclonedx_storage_arches(d, buildtime_dir):
+        pkgarch_dir = os.path.join(buildtime_dir, pkgarch)
+        if not os.path.isdir(pkgarch_dir):
+            continue
+        recipes.update(
+            entry for entry in os.listdir(pkgarch_dir)
+            if os.path.isfile(os.path.join(pkgarch_dir, entry))
+        )
+
+    return recipes
+
+def list_cyclonedx_buildtime_recipes_from_taskdeps(d):
+    """
+    List build-time recipes from the current task dependency graph.
+    This keeps incremental rebuilds accurate because BB_TASKDEPDATA includes
+    the full do_rootfs dependency set, even for recipes restored from sstate.
+    """
+
+    taskdepdata = d.getVar("BB_TASKDEPDATA", False)
+    if not taskdepdata:
+        return None
+
+    ignored_suffixes = tuple((d.getVar("SPECIAL_PKGSUFFIX") or "").split())
+    recipes = set()
+
+    for dep_data in taskdepdata.values():
+        if dep_data.taskname != "do_populate_cyclonedx":
+            continue
+        pn = dep_data.pn
+        if pn and not any(pn.endswith(suffix) for suffix in ignored_suffixes):
+            recipes.add(pn)
+
+    return recipes or None
+
+list_cyclonedx_buildtime_recipes_from_taskdeps[vardepsexclude] += "BB_TASKDEPDATA"
 
 def convert_to_spdx_license(d, spdx_license_ids):
     """
@@ -694,8 +776,6 @@ def export_cyclonedx(d):
     # Get configured spec version
     spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
 
-    cyclonedx_buildtime_dir = d.getVar("CYCLONEDX_BUILDTIME_DIR")
-
     # Generate sbom document header
     bb.debug(2, f"Creating empty temporary sbom file with serial number {sbom_serial_number}")
     sbom_metadata = {
@@ -744,8 +824,7 @@ def export_cyclonedx(d):
     if d.getVar('CYCLONEDX_RUNTIME_PACKAGES_ONLY') == "1":
         recipes = runtime_recipes
     else:
-        all_available = {pn for pn in os.listdir(cyclonedx_buildtime_dir)
-                        if os.path.exists(os.path.join(cyclonedx_buildtime_dir, pn))}
+        all_available = list_cyclonedx_buildtime_recipes(d)
         recipes = all_available.union(runtime_recipes)
 
     # Always include explicitly requested recipes (e.g. optee-os embedded in fitImage)
@@ -772,17 +851,20 @@ def export_cyclonedx(d):
 
     image_recipe_names = set()
     pn_lists = {}
-    pkgarchs = d.getVar("SSTATE_ARCHS").split()
-    pkgarchs.reverse()
+    missing_pn_lists = []
+    pn_data_dir = d.getVar("CYCLONEDX_PNDATA")
+    pkgarchs = list(iterate_cyclonedx_storage_arches(d, pn_data_dir))
+
     # first loop to fill the dictionary
     for pkg in recipes:
+        pn_list_filepath = None
         for pkgarch in pkgarchs:
-            pn_list_filepath = os.path.join(d.getVar("CYCLONEDX_PNDATA"),
-                                            pkgarch, f"{pkg}.json")
-            if os.path.exists(pn_list_filepath):
+            candidate = os.path.join(pn_data_dir, pkgarch, f"{pkg}.json")
+            if os.path.exists(candidate):
+                pn_list_filepath = candidate
                 break
-        if not os.path.exists(pn_list_filepath):
-            bb.error(f"CycloneDX PN file not found: {pkg}.json")
+        if pn_list_filepath is None:
+            missing_pn_lists.append(pkg)
             continue
         pn_lists[pkg] = read_json(pn_list_filepath)
         pn_list = copy.deepcopy(pn_lists[pkg])
@@ -800,6 +882,10 @@ def export_cyclonedx(d):
             # Only map once, to the first/primary package.
             if pkg not in alias_map:
                 alias_map[pkg] = pn_pkg["name"]
+
+    if missing_pn_lists:
+        missing_files = ", ".join(f"{pkg}.json" for pkg in sorted(missing_pn_lists))
+        bb.fatal(f"CycloneDX PN file not found: {missing_files}")
 
     for pkg in recipes:
         pn_list = copy.deepcopy(pn_lists[pkg])
@@ -820,7 +906,7 @@ def export_cyclonedx(d):
             # This fixes multi-output builds where shared components would get the wrong serial
             vex["vulnerabilities"].append(pn_cve)
 
-        # Add dependencies
+    # Add dependencies
     for pkg in recipes:
         pn_list = copy.deepcopy(pn_lists[pkg])
 
