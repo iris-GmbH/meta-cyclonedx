@@ -543,12 +543,15 @@ def generate_packages_list(d, products_names, version):
         else:
             vendor = ""
 
+        spdx_purls = (d.getVar("SPDX_PACKAGE_URLS") or "").split()
+        purl = spdx_purls[0] if spdx_purls else get_base_purl(d)
+
         pkg = {
             "name": product,
             "version": version,
             "type": "library",
             "cpe": 'cpe:2.3:*:{}:{}:{}:*:*:*:*:*:*:*'.format(vendor or "*", product, version),
-            "purl": get_base_purl(d),
+            "purl": purl,
             "bom-ref": str(uuid.uuid4())
         }
         if vendor != "":
