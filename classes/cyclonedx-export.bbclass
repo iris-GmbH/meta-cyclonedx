@@ -39,6 +39,9 @@ CYCLONEDX_UNPATCHED_VULNS_STATE ??= "in_triage"
 
 CYCLONEDX_RUNTIME_PACKAGES_ONLY ??= "1"
 
+# Version string for metadata.component in the CycloneDX SBOM.
+CYCLONEDX_IMAGE_VERSION ??= "${DISTRO_VERSION}${IMAGE_VERSION_SUFFIX}"
+
 # Space-separated list of recipe names to include in the SBOM regardless of
 # whether they produce rootfs packages. Use this for components that are
 # embedded directly into the image (e.g. OP-TEE inside a fitImage).
@@ -572,6 +575,95 @@ def list_runtime_recipes_from_packages(d):
         runtime_recipes.add(pkg_data["PN"])
     return runtime_recipes
 
+def list_image_install_recipes(d):
+    """
+    Return recipe names for packages explicitly requested in IMAGE_INSTALL.
+    """
+    return set(list_image_install_recipe_tokens(d).keys())
+
+def _resolve_runtime_token_to_recipe(d, token):
+    """
+    Resolve a package/runtime token (or virtual/* token) to recipe PN.
+    """
+    pkg_info = os.path.join(d.getVar('PKGDATA_DIR'), 'runtime-reverse', token)
+    if os.path.exists(pkg_info):
+        pkg_data = oe.packagedata.read_pkgdatafile(pkg_info)
+        return pkg_data.get("PN")
+
+    if token.startswith("virtual/"):
+        return d.getVar("PREFERRED_RPROVIDER_" + token) or d.getVar("PREFERRED_PROVIDER_" + token)
+
+    return None
+
+def _read_runtime_package_rdepends(d, pkg):
+    """
+    Read runtime dependencies of a package token from pkgdata/runtime.
+    """
+    pkg_runtime_info = os.path.join(d.getVar('PKGDATA_DIR'), 'runtime', pkg)
+    if not os.path.exists(pkg_runtime_info):
+        return []
+
+    pkg_data = oe.packagedata.read_pkgdatafile(pkg_runtime_info)
+    # pkgdata stores package-scoped dependency keys (e.g. RDEPENDS:busybox).
+    # Fall back to plain RDEPENDS for compatibility with possible format changes.
+    raw_rdepends = pkg_data.get(f"RDEPENDS:{pkg}") or pkg_data.get("RDEPENDS") or ""
+
+    # pkgdata may include version constraints and alternation markers.
+    # Keep the plain dependency tokens only.
+    deps = []
+    for dep in raw_rdepends.replace("|", " ").split():
+        if dep in ["(", ")", "=", ">=", "<=", ">", "<", "|"]:
+            continue
+        dep = dep.split("(", 1)[0].strip()
+        if dep:
+            deps.append(dep)
+    return deps
+
+def list_image_install_recipe_tokens(d):
+    """
+    Return a mapping of recipe name -> IMAGE_INSTALL tokens that selected it.
+    """
+    image_install = d.expand(d.getVar("IMAGE_INSTALL") or "").split()
+    recipe_tokens = {}
+
+    def add_token(recipe, token):
+        tokens = recipe_tokens.setdefault(recipe, set())
+        tokens.add(token)
+
+    def resolve_and_record(pkg_token, source_token):
+        recipe = _resolve_runtime_token_to_recipe(d, pkg_token)
+        if recipe:
+            add_token(recipe, source_token)
+        return recipe
+
+    for token in image_install:
+        if not token:
+            continue
+
+        root_recipe = resolve_and_record(token, token)
+        if not root_recipe:
+            bb.debug(2, f"Could not map IMAGE_INSTALL package '{token}' to a recipe token")
+            continue
+
+        # If IMAGE_INSTALL contains a packagegroup, treat packages brought in by
+        # that packagegroup as direct image-install components too.
+        if root_recipe.startswith("packagegroup-"):
+            queue = [token]
+            seen_pkg_tokens = set()
+
+            while queue:
+                current_pkg_token = queue.pop(0)
+                if current_pkg_token in seen_pkg_tokens:
+                    continue
+                seen_pkg_tokens.add(current_pkg_token)
+
+                for dep_pkg in _read_runtime_package_rdepends(d, current_pkg_token):
+                    dep_recipe = resolve_and_record(dep_pkg, token)
+                    if dep_recipe and dep_recipe.startswith("packagegroup-") and dep_pkg not in seen_pkg_tokens:
+                        queue.append(dep_pkg)
+
+    return recipe_tokens
+
 def list_runtime_recipes_from_depends(d, depends):
     runtime_recipes = set()
     ignored_suffixes = d.getVar("SPECIAL_PKGSUFFIX", "").split()
@@ -599,6 +691,10 @@ def export_cyclonedx(d):
 
     timestamp = datetime.now(timezone.utc).isoformat()
 
+    image_name = d.getVar("IMAGE_BASENAME") or d.getVar("PN") or "image"
+    image_version = d.getVar("CYCLONEDX_IMAGE_VERSION") or "unknown"
+    metadata_component_ref = str(uuid.uuid4())
+
     # Generate unique serial numbers for sbom and vex document
     sbom_serial_number = str(uuid.uuid4())
     vex_serial_number = str(uuid.uuid4())
@@ -617,11 +713,23 @@ def export_cyclonedx(d):
         "version": 1,
         "metadata": {
             "timestamp": timestamp,
-            "tools": create_tools_metadata(d)
+            "tools": create_tools_metadata(d),
+            "component": {
+                "type": "firmware",
+                "name": image_name,
+                "version": image_version,
+                "bom-ref": metadata_component_ref
+            }
         },
         "components": [],
         "dependencies": []
     }
+
+    # Only supported from CycloneDX 1.5.
+    if spec_version != "1.4":
+        sbom["metadata"]["lifecycles"] = [
+            {"phase": "build"}
+        ]
 
     # Generate vex document header
     bb.debug(2, f"Creating empty temporary vex file with serial number {sbom_serial_number}")
@@ -645,6 +753,10 @@ def export_cyclonedx(d):
     # Determine runtime packages for scope assignment
     runtime_recipes = list_runtime_recipes(d)
 
+    # Determine recipes explicitly requested by the image author.
+    image_install_recipes = set()
+    image_install_recipes = list_image_install_recipes(d)
+
     # Determine which recipes to include
     recipes = set()
     if d.getVar('CYCLONEDX_RUNTIME_PACKAGES_ONLY') == "1":
@@ -657,6 +769,7 @@ def export_cyclonedx(d):
     # Always include explicitly requested recipes (e.g. optee-os embedded in fitImage)
     # Resolve virtual/* entries via PREFERRED_PROVIDER_*
     extra_recipes = set()
+
     for recipe in (d.getVar('CYCLONEDX_EXTRA_RUNTIME_RECIPES') or '').split():
         if recipe.startswith("virtual/"):
             resolved = (d.getVar("PREFERRED_RPROVIDER_" + recipe)
@@ -668,6 +781,12 @@ def export_cyclonedx(d):
             recipe = resolved
         extra_recipes.add(recipe)
     recipes = recipes.union(extra_recipes)
+
+    # Treat extra runtime recipes as direct image-install intent.
+    image_install_recipes = image_install_recipes.union(extra_recipes)
+
+    # Track direct-install components without persisting debug properties in output.
+    directly_installed_component_refs = set()
 
     # Create a bom_ref_map for dependencies sanitarization
     # And an alias_map to retrieve real pkg name
@@ -712,13 +831,22 @@ def export_cyclonedx(d):
 
         for pn_pkg in pn_list["pkgs"]:
             # Avoid multiple pkgs referencing the same cpe
-            if any(sbom_pkg["cpe"] == pn_pkg["cpe"] for sbom_pkg in sbom["components"]):
+            existing_component = next((sbom_pkg for sbom_pkg in sbom["components"]
+                                       if sbom_pkg["cpe"] == pn_pkg["cpe"]), None)
+            if existing_component:
+                if pkg in image_install_recipes:
+                    existing_ref = existing_component.get("bom-ref")
+                    if existing_ref:
+                        directly_installed_component_refs.add(existing_ref)
                 continue
 
             # Add scope field to indicate runtime vs build-time component
             # Can be disabled for certain SBOM profiles or tool compatibility
             if d.getVar('CYCLONEDX_ADD_COMPONENT_SCOPES') == "1":
                 pn_pkg["scope"] = "required" if pkg in runtime_recipes or pkg in extra_recipes else "excluded"
+
+            if pkg in image_install_recipes:
+                directly_installed_component_refs.add(pn_pkg["bom-ref"])
 
             sbom["components"].append(pn_pkg)
         for pn_cve in pn_list["cves"]:
@@ -772,6 +900,16 @@ def export_cyclonedx(d):
                 updated_entry = {"ref": component_ref, "dependsOn": resolved_depends}
                 if updated_entry not in sbom["dependencies"]:
                     sbom["dependencies"].append(updated_entry)
+
+    # Add a root dependency node as the first entry.
+    # It references metadata.component and points to all directly installed components.
+    directly_installed_refs = sorted(directly_installed_component_refs)
+
+    root_dep_entry = {
+        "ref": metadata_component_ref,
+        "dependsOn": directly_installed_refs
+    }
+    sbom["dependencies"].insert(0, root_dep_entry)
 
     # Replace SBOM serial placeholder in VEX vulnerabilities
     # This must be done after all vulnerabilities are collected to ensure each image
