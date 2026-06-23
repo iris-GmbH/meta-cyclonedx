@@ -80,6 +80,24 @@ CYCLONEDX_SPEC_VERSION = "1.6"  # Default - modern format
 - **1.6**: Modern format with enhanced metadata and timestamps (default)
 - **1.7**: Latest version with advanced cryptography transparency (CBOM), intellectual property visibility, citations, and improved custom license handling
 
+### Image Component Version
+
+The generated SBOM includes a top-level image component in metadata. Its version
+value is controlled by CYCLONEDX_IMAGE_VERSION.
+
+By default, this is derived from Yocto's distro/image version variables:
+
+```sh
+CYCLONEDX_IMAGE_VERSION = "${DISTRO_VERSION}${IMAGE_VERSION_SUFFIX}"
+```
+
+You can override it to match your release process (for example, a semantic
+version, CI build number, or git tag):
+
+```sh
+CYCLONEDX_IMAGE_VERSION = "2026.07.0"
+```
+
 ### Runtime vs Build-time Packages
 
 By default, meta-cyclonedx will only include run-time packages in the SBOM,
@@ -304,6 +322,10 @@ This produces the smallest valid CycloneDX SBOM with only essential vulnerabilit
 ```sh
 # Specification version (default: "1.6")
 CYCLONEDX_SPEC_VERSION = "1.6"  # or "1.7" or "1.4"
+
+# Version for metadata.component in the generated SBOM
+# (default: "${DISTRO_VERSION}${IMAGE_VERSION_SUFFIX}")
+CYCLONEDX_IMAGE_VERSION = "${DISTRO_VERSION}${IMAGE_VERSION_SUFFIX}"
 
 # Include build-time packages (default: "1" = runtime only)
 CYCLONEDX_RUNTIME_PACKAGES_ONLY = "1"
