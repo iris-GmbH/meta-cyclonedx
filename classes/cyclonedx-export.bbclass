@@ -890,12 +890,12 @@ def export_cyclonedx(d):
         path = d.getVar(path_variable_name)
         if not path:
             if required:
-                bb.error(f"{var} must be set")
+                bb.error(f"{path_variable_name} must be set")
             else:
                 return path
         if os.path.isabs(path):
             if not path.startswith(export_dir):
-                bb.error(var + " must be a relative path or start with ${CYCLONEDX_EXPORT_DIR})")
+                bb.error(path_variable_name + " must be a relative path or start with ${CYCLONEDX_EXPORT_DIR}")
             else:
                 path = Path(path).relative_to(export_dir)
         path = os.path.join(tmp_export_dir, path)
