@@ -50,6 +50,15 @@ CYCLONEDX_EXTRA_RUNTIME_RECIPES ??= ""
 # Add component licenses (as specified within the recipe) to the SBOM
 CYCLONEDX_ADD_COMPONENT_LICENSES ??= "1"
 
+# Space-separated list of "name=value" pairs to attach to this recipe's
+# components as a CycloneDX properties array (e.g. downstream/vendor tagging
+# such as `seco:modified=true`). Empty by default (no properties added).
+# NOTE: this must be a plain string value, not a bitbake variable flag —
+# flag names cannot contain ":" (see bitbake's ConfHandler flag regex), so
+# CYCLONEDX_COMPONENT_PROPERTIES[foo:bar] = "..." is invalid syntax and will
+# fail to parse.
+CYCLONEDX_COMPONENT_PROPERTIES ??= ""
+
 # Optionally, split simple license expressions (only containing "AND") into multiple licenses.
 CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS ??= "1"
 
@@ -155,6 +164,10 @@ python do_populate_cyclonedx() {
             else:
                 bb.warn(f"LICENSE variable not set for package {pn}")
 
+        custom_properties = get_custom_properties(d)
+        if custom_properties:
+            pkg["properties"] = custom_properties
+
         pn_list["pkgs"].append(pkg)
         bom_ref = pkg["bom-ref"]
 
@@ -246,6 +259,7 @@ SSTATETASKS += "do_populate_cyclonedx"
 do_populate_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_PNDATA_WORKDIR}"
 do_populate_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_PNDATA}/${SSTATE_PKGARCH}"
 do_populate_cyclonedx[vardeps] += "CYCLONEDX_PNDATA"
+do_populate_cyclonedx[vardeps] += "CYCLONEDX_COMPONENT_PROPERTIES"
 python do_populate_cyclonedx_setscene() {
     sstate_setscene(d)
 }
@@ -351,6 +365,23 @@ def resolve_license_data(d):
             license_info[-1]["license"]["acknowledgement"] = "declared"
 
     return license_info
+
+def get_custom_properties(d):
+    """
+    Parse CYCLONEDX_COMPONENT_PROPERTIES ("name=value" entries, space separated)
+    into a CycloneDX properties array: [{"name": ..., "value": ...}, ...].
+
+    Malformed entries (missing "=") are skipped with a warning rather than
+    failing the build, since a typo here shouldn't break SBOM generation.
+    """
+    properties = []
+    for entry in (d.getVar("CYCLONEDX_COMPONENT_PROPERTIES") or "").split():
+        name, sep, value = entry.partition("=")
+        if not sep:
+            bb.warn(f"Ignoring malformed CYCLONEDX_COMPONENT_PROPERTIES entry (expected name=value): {entry}")
+            continue
+        properties.append({"name": name, "value": value})
+    return properties
 
 def create_tools_metadata(d):
     """
