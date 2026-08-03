@@ -186,6 +186,19 @@ To disable this feature you can set
 CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS = "0"
 ```
 
+### Component Properties
+
+The CycloneDX spec supports a `properties` array on components for arbitrary
+organization-specific metadata (e.g. downstream/vendor tagging). You can
+populate it per-recipe with a space-separated list of `name=value` pairs:
+
+```sh
+CYCLONEDX_COMPONENT_PROPERTIES = "custom:modified=true custom:team=platform"
+```
+
+Entries missing an `=` are skipped with a warning rather than failing the
+build. The variable is empty (no properties added) by default.
+
 ### Minimal SBOM Configuration
 
 Meta-cyclonedx supports generating a **minimal SBOM** that includes only the essential information required by the CycloneDX specification. This is useful for:
@@ -278,6 +291,10 @@ CYCLONEDX_INCLUDE_UNPATCHED_VULNS = "1"
 # State to assign to unpatched vulnerabilities (default: "in_triage").
 # Can be empty to omit the state field.
 CYCLONEDX_UNPATCHED_VULNS_STATE = "in_triage"
+
+# Space-separated "name=value" pairs attached to this recipe's components
+# as a CycloneDX properties array (default: "").
+CYCLONEDX_COMPONENT_PROPERTIES = ""
 
 # Space-separated list of recipes to always include with scope "required",
 # even if they do not produce rootfs packages (default: "").
