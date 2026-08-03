@@ -194,6 +194,19 @@ To disable this feature you can set
 CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS = "0"
 ```
 
+### Component Properties
+
+The CycloneDX spec supports a `properties` array on components for arbitrary
+organization-specific metadata (e.g. downstream/vendor tagging). You can
+populate it per-recipe with a space-separated list of `name=value` pairs:
+
+```sh
+CYCLONEDX_COMPONENT_PROPERTIES = "custom:modified=true custom:team=platform"
+```
+
+Entries missing an `=` are skipped with a warning rather than failing the
+build. The variable is empty (no properties added) by default.
+
 ### CycloneDX 1.7 Optional Features
 
 When using CycloneDX 1.7, you can enable additional optional features for enhanced SBOM quality:
@@ -342,6 +355,10 @@ CYCLONEDX_ADD_COMPONENT_LICENSES = "1"
 # split license expressions into multiple license entries
 # when possible (default: "1")
 CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS = "1"
+
+# Space-separated "name=value" pairs attached to this recipe's components
+# as a CycloneDX properties array (default: "").
+CYCLONEDX_COMPONENT_PROPERTIES = ""
 
 # CycloneDX 1.7 optional features
 CYCLONEDX_ADD_LICENSE_DETAILS = "1"  # Include license text for custom licenses
