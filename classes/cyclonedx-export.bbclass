@@ -731,7 +731,6 @@ def export_cyclonedx(d):
         "timestamp": timestamp,
         "tools": create_tools_metadata(d)
     }
-    add_metadata_extensions(d, sbom_metadata)
     sbom_metadata["component"] = {
         "type": "firmware",
         "name": image_name,
