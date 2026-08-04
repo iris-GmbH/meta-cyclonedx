@@ -42,6 +42,15 @@ CYCLONEDX_IMAGE_VERSION ??= "${DISTRO_VERSION}${IMAGE_VERSION_SUFFIX}"
 # embedded directly into the image (e.g. OP-TEE inside a fitImage).
 CYCLONEDX_EXTRA_RUNTIME_RECIPES ??= ""
 
+# Space-separated list of CycloneDX documents produced by the recipe itself, for
+# language ecosystems that resolve their own dependency tree (cargo, npm, go).
+# Their components and dependency edges are merged into the image BOM verbatim.
+CYCLONEDX_EXTRA_BOM_FILES ??= ""
+
+# Whether to fail the build if a specified CycloneDX document does not exists or
+# cannot be parsed. Set to "0" to emit a warning instead.
+CYCLONEDX_EXTRA_BOM_FILES_FAIL_ON_BROKEN_BOM_FILES ??= "1"
+
 # Add component licenses (as specified within the recipe) to the SBOM
 CYCLONEDX_ADD_COMPONENT_LICENSES ??= "1"
 
@@ -206,6 +215,50 @@ python do_populate_cyclonedx() {
 
     pn_list["dependencies"] = dependencies
 
+    # Fold in CycloneDX documents produced by the recipe itself (cargo, npm, go,
+    # ...). They are stored aside from "pkgs"/"dependencies" because they are
+    # already fully resolved and must bypass the CPE deduplication and the
+    # recipe-name dependency remapping that export_cyclonedx() applies to
+    # Yocto-derived components.
+    extra_components = []
+    extra_dependencies = []
+    extra_roots = []
+    for bom_path in (d.getVar("CYCLONEDX_EXTRA_BOM_FILES") or "").split():
+        if not os.path.exists(bom_path):
+            if d.GetVar("CYCLONEDX_EXTRA_BOM_FILES_FAIL_ON_BROKEN_BOM_FILES") = "0":
+                bb.warn(f"CYCLONEDX_EXTRA_BOM_FILES: {pn}: no such file, skipping: {bom_path}")
+                continue
+            else:
+                bb.fatal(f"CYCLONEDX_EXTRA_BOM_FILES: {pn}: no such file: {bom_path}")
+        try:
+            extra_bom = read_json(bom_path)
+        except Exception as e:
+            if d.GetVar("CYCLONEDX_EXTRA_BOM_FILES_FAIL_ON_BROKEN_BOM_FILES") = "0":
+                bb.warn(f"CYCLONEDX_EXTRA_BOM_FILES: {pn}: cannot parse {bom_path}, skipping: {e}")
+                continue
+            else:
+                bb.fatal(f"CYCLONEDX_EXTRA_BOM_FILES: {pn}: cannot parse {bom_path}: {e}")
+        components = extra_bom.get("components") or []
+        # The document's own root -- metadata.component, i.e. the module the
+        # recipe builds -- is by convention not repeated in "components", yet
+        # the dependency edges reference it. Carry it over explicitly, or the
+        # merged tree hangs off a bom-ref that resolves to nothing, and remember
+        # it so export_cyclonedx() can attach the tree to the recipe.
+        root = (extra_bom.get("metadata") or {}).get("component") or {}
+        if root.get("bom-ref"):
+            components = components + [root]
+            extra_roots.append(root["bom-ref"])
+        extra_components.extend(components)
+        extra_dependencies.extend(extra_bom.get("dependencies") or [])
+        bb.debug(1, f"CYCLONEDX_EXTRA_BOM_FILES: {pn}: merged {len(components)} "
+                    f"components from {bom_path}")
+    if extra_components:
+        pn_list["extra_components"] = extra_components
+    if extra_dependencies:
+        pn_list["extra_dependencies"] = extra_dependencies
+    if extra_roots:
+        pn_list["extra_roots"] = extra_roots
+
     # write partial sbom to the recipes work folder
     write_json(os.path.join(d.getVar("CYCLONEDX_PNDATA_WORKDIR"), f"{pn}.json"), pn_list)
 
@@ -221,6 +274,7 @@ do_populate_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_PNDATA_WORKDIR}"
 do_populate_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_PNDATA}/${SSTATE_PKGARCH}"
 do_populate_cyclonedx[vardeps] += "CYCLONEDX_PNDATA"
 do_populate_cyclonedx[vardeps] += "CYCLONEDX_COMPONENT_PROPERTIES"
+do_populate_cyclonedx[vardeps] += "CYCLONEDX_EXTRA_BOM_FILES"
 python do_populate_cyclonedx_setscene() {
     sstate_setscene(d)
 }
@@ -1017,6 +1071,58 @@ def export_cyclonedx(d):
                 updated_entry = {"ref": component_ref, "dependsOn": resolved_depends}
                 if updated_entry not in sbom["dependencies"]:
                     sbom["dependencies"].append(updated_entry)
+
+    # Fold in pre-resolved CycloneDX fragments contributed by recipes.
+    #
+    # Language ecosystems that resolve their own dependency trees (cargo, npm,
+    # go, ...) are invisible to Yocto's package model: the image BOM lists the
+    # recipe that builds the binary, but not the hundreds of modules linked into
+    # it. Such a recipe can generate a CycloneDX document at build time and
+    # attach it to its own pn fragment under "extra_components" /
+    # "extra_dependencies", and it is merged into the image BOM here.
+    #
+    # These entries already carry their own bom-refs, purls and dependency
+    # edges, so they are appended verbatim: the CPE deduplication and the
+    # recipe-name dependency remapping above apply to components derived from
+    # Yocto packages and would corrupt an externally resolved tree.
+    extra_seen_refs = {c["bom-ref"] for c in sbom["components"] if c.get("bom-ref")}
+    for pkg in recipes:
+        pn_list = pn_lists.get(pkg)
+        if not pn_list:
+            continue
+        for component in pn_list.get("extra_components", []):
+            ref = component.get("bom-ref") or component.get("purl")
+            if ref:
+                if ref in extra_seen_refs:
+                    continue
+                extra_seen_refs.add(ref)
+            sbom["components"].append(component)
+        for dep_entry in pn_list.get("extra_dependencies", []):
+            if dep_entry not in sbom["dependencies"]:
+                sbom["dependencies"].append(dep_entry)
+
+        # Attach each contributed tree to the recipe that produced it, so the
+        # modules are attributable to the binary they are linked into instead of
+        # floating unreferenced at the top level of the BOM.
+        extra_roots = pn_list.get("extra_roots") or []
+        if not extra_roots:
+            continue
+        owner_name = alias_map.get(pkg)
+        owner = bom_ref_map.get(owner_name) if owner_name else None
+        owner_ref = owner.get("bom-ref") if owner else None
+        if owner_ref in global_bom_ref_dedup_map:
+            owner_ref = global_bom_ref_dedup_map[owner_ref]
+        if not owner_ref or not any(c.get("bom-ref") == owner_ref for c in sbom["components"]):
+            bb.debug(1, f"CYCLONEDX_EXTRA_BOM_FILES: {pkg}: no component to attach "
+                        f"{len(extra_roots)} contributed tree(s) to")
+            continue
+        owner_entry = next((x for x in sbom["dependencies"] if x["ref"] == owner_ref), None)
+        if owner_entry is None:
+            owner_entry = {"ref": owner_ref, "dependsOn": []}
+            sbom["dependencies"].append(owner_entry)
+        for root_ref in extra_roots:
+            if root_ref in extra_seen_refs and root_ref not in owner_entry["dependsOn"]:
+                owner_entry["dependsOn"].append(root_ref)
 
     # Add a root dependency node as the first entry.
     # It references metadata.component and points to all directly installed components.
