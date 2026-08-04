@@ -133,6 +133,55 @@ Multiple recipe names are separated by spaces. Each listed recipe must have
 already run `do_populate_cyclonedx` during the build, otherwise an error is
 raised and the recipe is skipped.
 
+### Recipe-contributed CycloneDX Fragments
+
+Language ecosystems that resolve their own dependency trees — cargo, npm, go —
+are invisible to Yocto's package model. The image BOM lists the recipe that
+builds the binary, but not the modules linked into it, so a Rust service appears
+as a single component while the crates it depends on (and their advisories) are
+missing.
+
+A recipe can close that gap by generating a CycloneDX document at build time and
+pointing `CYCLONEDX_EXTRA_BOM_FILES` at it:
+
+```sh
+CYCLONEDX_EXTRA_BOM_FILES = "${B}/cargo-cyclonedx.json"
+```
+
+Multiple documents are separated by spaces. Each file is read during
+`do_populate_cyclonedx`, so it must already exist by then — a recipe that
+generates the document while building should order the task accordingly:
+
+```sh
+addtask do_populate_cyclonedx after do_compile
+```
+
+The components and dependency edges are merged into the image BOM verbatim.
+They already carry their own bom-refs, purls and dependency edges, so the CPE
+deduplication and the recipe-name dependency remapping applied to Yocto-derived
+components are deliberately skipped — those would corrupt an externally
+resolved tree. Duplicate `bom-ref`s (the same crate pulled in by two recipes)
+are dropped, keeping the first occurrence.
+
+The document's own root — `metadata.component`, the module the recipe builds —
+is carried over as a component too, and a dependency edge is added from the
+contributing recipe's component to it. The resulting tree therefore hangs off
+the package it belongs to:
+
+```
+ripgrep (pkg:yocto)          the recipe, as discovered by Yocto
+└── ripgrep (metadata.component of the contributed document)
+    └── regex (pkg:cargo) → aho-corasick (pkg:cargo) → …
+```
+
+Both steps are needed: CycloneDX does not repeat `metadata.component` inside
+`components`, yet the document's dependency edges reference it, so without
+them the merged tree would hang off an unresolvable bom-ref and the modules
+would float unattributed at the top level of the BOM.
+
+A missing or unparsable file produces a warning and is skipped, so a build does
+not fail because a language ecosystem could not emit its SBOM.
+
 ### Component Scopes
 
 When including both runtime and build-time packages, meta-cyclonedx uses
