@@ -20,6 +20,14 @@ CYCLONEDX_WORK_DIR_ROOT ??= "${TMPDIR}/cyclonedx"
 CYCLONEDX_WORK_DIR = "${CYCLONEDX_WORK_DIR_ROOT}/${PN}"
 CYCLONEDX_WORK_DIR_PN_LIST = "${CYCLONEDX_WORK_DIR}/pn-list.json"
 
+# Shared identifier so separate targets built together (e.g. an image, its flasher, its
+# initramfs) can be recognized as coming from the same build, without implying that one
+# contains another. Defaults to a UUID generated once per bitbake invocation (see
+# clean_cyclonedx_work_folder below); set CYCLONEDX_BUILD_ID explicitly (e.g. from a CI
+# run identifier) to correlate targets built across multiple separate bitbake invocations.
+CYCLONEDX_BUILD_ID ??= ""
+CYCLONEDX_BUILD_ID_FILE ??= "${CYCLONEDX_WORK_DIR_ROOT}/build-id"
+
 # We need to add the sbom serial number to the list of vulnerabilites for each recipe but
 # don't know it until after we generate the sbom export header file
 CYCLONEDX_SBOM_SERIAL_PLACEHOLDER = "<SBOM_SERIAL>"
@@ -49,7 +57,16 @@ python () {
 # Clean out work folder to avoid leftovers from previous builds when including build-time package
 # information and a recipe was removed from the dependency list. (CYCLONEDX_RUNTIME_PACKAGES_ONLY set to 0)
 python clean_cyclonedx_work_folder() {
+    import uuid
+    from pathlib import Path
+
     bb.note(f"Cleaning cyclonedx work folder {d.getVar('CYCLONEDX_WORK_DIR_ROOT')}")
+
+    # One build-id per bitbake invocation, shared by every target built in it, so
+    # unrelated (but concurrently produced) artifacts can be correlated later on.
+    build_id_file = Path(d.getVar("CYCLONEDX_BUILD_ID_FILE"))
+    build_id_file.parent.mkdir(parents=True, exist_ok=True)
+    build_id_file.write_text(str(uuid.uuid4()))
 }
 clean_cyclonedx_work_folder[cleandirs] = "${CYCLONEDX_WORK_DIR_ROOT}"
 addhandler clean_cyclonedx_work_folder
@@ -242,11 +259,52 @@ python do_deploy_cyclonedx() {
     Select CVE and package information and runtime packages and output them into a single export file.
     """
     from oe.rootfs import image_list_installed_packages
+    from pathlib import Path
+    import re
     import uuid
     from datetime import datetime, timezone
     import os
 
     timestamp = datetime.now(timezone.utc).isoformat()
+
+    # Shared across every target that should be recognized as coming from the same
+    # build, without implying that one contains another. An explicit CYCLONEDX_BUILD_ID
+    # (e.g. set by CI from its own run identifier) takes precedence, since it can span
+    # multiple bitbake invocations; otherwise fall back to the UUID generated once per
+    # bitbake invocation by clean_cyclonedx_work_folder.
+    build_id = d.getVar("CYCLONEDX_BUILD_ID")
+    if not build_id:
+        build_id_file = Path(d.getVar("CYCLONEDX_BUILD_ID_FILE"))
+        if build_id_file.exists():
+            build_id = build_id_file.read_text().strip()
+        else:
+            bb.warn(f"{build_id_file} not found, generating a standalone cyclonedx build-id")
+            build_id = str(uuid.uuid4())
+    metadata_properties = [{"name": "balena:build-id", "value": build_id}]
+
+    component = {
+        "type": "application",
+        "bom-ref": str(uuid.uuid4()),
+        "name": d.getVar("PN"),
+        "version": d.getVar("PV"),
+        "properties": [
+            {"name": "yocto:distro", "value": d.getVar("DISTRO") or ""},
+            {"name": "yocto:distro-version", "value": d.getVar("DISTRO_VERSION") or ""},
+            {"name": "yocto:machine", "value": d.getVar("MACHINE") or ""},
+        ],
+    }
+
+    # MAINTAINER is a standard OE variable formatted as "Name <email>", e.g.
+    # balenaOS sets it to "Balena <hello@balena.io>" in balena-os.inc
+    maintainer = d.getVar("MAINTAINER") or ""
+    maintainer_match = re.match(r"^(.*?)\s*<(.+)>$", maintainer.strip())
+    if maintainer_match:
+        maintainer_name, maintainer_email = maintainer_match.groups()
+        supplier = {"name": maintainer_name, "contact": [{"email": maintainer_email}]}
+    elif maintainer:
+        supplier = {"name": maintainer}
+    else:
+        supplier = {}
 
     # Generate unique serial numbers for sbom and vex document
     sbom_serial_number = str(uuid.uuid4())
@@ -262,8 +320,11 @@ python do_deploy_cyclonedx() {
         "serialNumber": f"urn:uuid:{sbom_serial_number}",
         "version": 1,
         "metadata": {
+            "supplier": supplier,
+            "component": component,
             "timestamp": timestamp,
-            "tools": [{"name": "yocto"}]
+            "tools": [{"name": "yocto"}],
+            "properties": metadata_properties
         },
         "components": []
     }
@@ -276,8 +337,11 @@ python do_deploy_cyclonedx() {
         "serialNumber": f"urn:uuid:{vex_serial_number}",
         "version": 1,
         "metadata": {
+            "supplier": supplier,
+            "component": component,
             "timestamp": timestamp,
-            "tools": [{"name": "yocto"}]
+            "tools": [{"name": "yocto"}],
+            "properties": metadata_properties
         },
         "vulnerabilities": []
     }
