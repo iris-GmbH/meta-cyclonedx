@@ -1,4 +1,14 @@
 - commits:
+    - subject: "minor: improve bom and vex metadata"
+      hash: 3a128482a97b7d9a32757cf012f79cb249395392
+      body: ""
+      footer: {}
+      author: Edwin Joassart
+      nested: []
+  version: 0.2.0
+  title: ""
+  date: 2026-08-06T08:20:59.395Z
+- commits:
     - subject: "minor: conf/layer: Mention wrynose compatibility"
       hash: f6996b107b19539ab9c4288e05de745909f84acf
       body: ""
