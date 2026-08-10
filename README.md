@@ -452,6 +452,13 @@ permissions.
 An example python script can be found at
 `examples/automated-dependencytrack-upload.py` and may be freely used (CC0-1.0).
 
+## Contributing
+
+Thanks for your interest in contributing to `meta-cyclonedx`!
+
+Please read the dedicated [./CONTRIBUTING.md](CONTRIBUTING.md) file before
+opening issues or pull requests.
+
 ## Known Limitations
 
 ### Potentially Missing Packages After Run-time Filtering
