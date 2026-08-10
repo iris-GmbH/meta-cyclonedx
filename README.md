@@ -207,6 +207,24 @@ CYCLONEDX_COMPONENT_PROPERTIES = "custom:modified=true custom:team=platform"
 Entries missing an `=` are skipped with a warning rather than failing the
 build. The variable is empty (no properties added) by default.
 
+### Improved Kernel CVE filtering
+
+By default, improved Kernel CVE filtering is disabled.
+
+Enabling improved Kernel CVE filtering can reduce the amount of false positive
+CVEs within the Linux Kernel:
+
+```sh
+CYCLONEDX_IMPROVE_KERNEL_CVE_REPORT = "1"
+```
+
+You may also choose to override the default `SRC_URI` for Linux Kernel
+CVE vulnerabilities (defaults to `git://git.kernel.org/pub/scm/linux/security/vulns.git;protocol=https;branch=master;name=vulns;destsuffix=vulns`):
+
+```sh
+CYCLONEDX_IMPROVE_KERNEL_CVE_VULNS_URL = ...
+```
+
 ### CycloneDX 1.7 Optional Features
 
 When using CycloneDX 1.7, you can enable additional optional features for enhanced SBOM quality:

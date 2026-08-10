@@ -72,6 +72,7 @@ CYCLONEDX_TLP_MARKING ??= ""
 
 # kernel CVE filtering
 CYCLONEDX_IMPROVE_KERNEL_CVE_REPORT ??= "0"
+CYCLONEDX_IMPROVE_KERNEL_CVE_VULNS_URL ??= "git://git.kernel.org/pub/scm/linux/security/vulns.git;protocol=https;branch=master;name=vulns;destsuffix=vulns"
 
 CYCLONEDX_TMP_EXPORT_DIR = "${WORKDIR}/cyclonedx-export"
 CYCLONEDX_EXPORT_DIR ??= "${DEPLOY_DIR_IMAGE}"
@@ -1200,8 +1201,9 @@ def append_cve_status(d):
         detail = vuln["detail"]
         if status == "Unpatched":
             continue
-        detail = detail_map.get(detail, detail)
-        d.setVarFlag("CVE_STATUS", cveid, detail)
+        detail = detail_map.get(detail, detail) + ": CYCLONEDX_IMPROVE_KERNEL_CVE_REPORT"
+        if d.getVarFlag("CVE_STATUS", cveid, True) is None:
+            d.setVarFlag("CVE_STATUS", cveid, detail)
 
 
 python do_populate_cyclonedx:prepend() {
@@ -1214,9 +1216,8 @@ python do_populate_cyclonedx:prepend() {
 python () {
     provides = d.getVar("PROVIDES") or ""
     if "virtual/kernel" in provides.split() and d.getVar("CYCLONEDX_IMPROVE_KERNEL_CVE_REPORT") == "1":
-        d.appendVar("SRC_URI", " git://git.kernel.org/pub/scm/linux/security/vulns.git;protocol=https;branch=master;name=vulns;destsuffix=vulns")
+        d.appendVar("SRC_URI", f" {d.getVar("CYCLONEDX_IMPROVE_KERNEL_CVE_VULNS_URL")}")
         d.appendVar("SRCREV_FORMAT", "_vulns")
-        d.setVar("SRCREV_vulns", "master")
         # creation of .cmd files must complete before do_populate_cyclonedx executes
         d.appendVarFlag("do_populate_cyclonedx", "recrdeptask", "do_install");
     else:
