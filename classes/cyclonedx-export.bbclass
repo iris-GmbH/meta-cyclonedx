@@ -1106,11 +1106,39 @@ def export_cyclonedx(d):
     # Replace SBOM serial placeholder in VEX vulnerabilities
     # This must be done after all vulnerabilities are collected to ensure each image
     # gets its own SBOM serial number in multi-output builds (e.g., rootfs + initramfs)
+    sbom_refs = {comp["bom-ref"] for comp in sbom["components"]}
+    serial_placeholder = d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER')
+    resolved_vulns = []
+    covered_refs = {}
     for vuln in vex["vulnerabilities"]:
+        affects = []
         for affect in vuln.get("affects", []):
-            if "ref" in affect:
-                affect["ref"] = affect["ref"].replace(
-                    d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER'), sbom_serial_number)
+            if "ref" not in affect:
+                affects.append(affect)
+                continue
+
+            prefix, _, bom_ref = affect["ref"].rpartition("#")
+            bom_ref = global_bom_ref_dedup_map.get(bom_ref, bom_ref)
+            # A component dropped by CPE deduplication is covered by its duplicate.
+            if bom_ref not in sbom_refs:
+                continue
+
+            ref = f"{prefix}#{bom_ref}".replace(serial_placeholder, sbom_serial_number)
+            if not any(existing.get("ref") == ref for existing in affects):
+                affects.append({**affect, "ref": ref})
+
+        if not affects:
+            continue
+
+        # Recipes sharing a CPE report the same CVE, so keep only the first statement.
+        refs = {affect["ref"] for affect in affects if "ref" in affect}
+        if refs and refs.issubset(covered_refs.get(vuln["id"], set())):
+            continue
+        covered_refs.setdefault(vuln["id"], set()).update(refs)
+
+        vuln["affects"] = affects
+        resolved_vulns.append(vuln)
+    vex["vulnerabilities"] = resolved_vulns
 
     export_dir = d.getVar("CYCLONEDX_EXPORT_DIR")
     tmp_export_dir = d.getVar("CYCLONEDX_TMP_EXPORT_DIR")
