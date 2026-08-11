@@ -731,19 +731,72 @@ def list_image_install_recipes(d):
                     continue
                 seen_pkg_tokens.add(current_pkg_token)
 
-                for dep_pkg in _read_runtime_package_rdepends(d, current_pkg_token):
+                for dep_pkg in _read_runtime_package_deps(d, current_pkg_token):
                     dep_recipe = resolve_and_record(dep_pkg)
                     if dep_recipe and dep_recipe.startswith("packagegroup-") and dep_pkg not in seen_pkg_tokens:
                         queue.append(dep_pkg)
 
     return recipes
 
+def build_runtime_dependency_edges(d):
+    """
+    Build recipe -> recipes runtime edges from the pkgdata of the packages that
+    are actually installed in the image.
+
+    Unlike the recipe's parse-time RDEPENDS:${PN}, pkgdata also carries
+    RRECOMMENDS, the dependencies of every other package a recipe produces and
+    the shared library dependencies generated during do_package.
+    """
+    from oe.rootfs import image_list_installed_packages
+
+    # runtime-reverse only indexes package names, so collect the RPROVIDES of
+    # the installed packages to be able to resolve virtual dependencies too.
+    providers = {}
+    installed_recipes = {}
+    for pkg in list(image_list_installed_packages(d)):
+        pkg_file = _pkgdata_runtime_file(d, pkg)
+        if not pkg_file:
+            continue
+        pkg_data = oe.packagedata.read_pkgdatafile(pkg_file)
+        recipe = pkg_data.get("PN")
+        if not recipe:
+            continue
+        installed_recipes[pkg] = recipe
+        providers[pkg] = recipe
+        for name, value in pkg_data.items():
+            if name == "RPROVIDES" or name.startswith("RPROVIDES:"):
+                for token in _split_dep_tokens(value):
+                    providers.setdefault(token, recipe)
+
+    edges = {}
+    for pkg, recipe in installed_recipes.items():
+        for dep in _read_runtime_package_deps(d, pkg, ("RDEPENDS", "RRECOMMENDS")):
+            dep_recipe = providers.get(dep) or _resolve_runtime_token_to_recipe(d, dep)
+            if not dep_recipe or dep_recipe == recipe:
+                continue
+            edges.setdefault(recipe, set()).add(dep_recipe)
+    return edges
+
+def _pkgdata_runtime_file(d, token):
+    """
+    Locate the pkgdata file for a runtime token.
+
+    runtime-reverse/ is keyed by the final package name and by RPROVIDES, while
+    runtime/ is keyed by the pre-rename package name used inside RDEPENDS.
+    """
+    pkgdata_dir = d.getVar('PKGDATA_DIR')
+    for subdir in ('runtime-reverse', 'runtime'):
+        path = os.path.join(pkgdata_dir, subdir, token)
+        if os.path.exists(path):
+            return path
+    return None
+
 def _resolve_runtime_token_to_recipe(d, token):
     """
     Resolve a package/runtime token (or virtual/* token) to recipe PN.
     """
-    pkg_info = os.path.join(d.getVar('PKGDATA_DIR'), 'runtime-reverse', token)
-    if os.path.exists(pkg_info):
+    pkg_info = _pkgdata_runtime_file(d, token)
+    if pkg_info:
         pkg_data = oe.packagedata.read_pkgdatafile(pkg_info)
         return pkg_data.get("PN")
 
@@ -752,28 +805,35 @@ def _resolve_runtime_token_to_recipe(d, token):
 
     return None
 
-def _read_runtime_package_rdepends(d, pkg):
+def _split_dep_tokens(value):
     """
-    Read runtime dependencies of a package token from pkgdata/runtime.
+    Strip version constraints and alternation markers from a pkgdata dependency
+    value and return the plain tokens.
     """
-    pkg_runtime_info = os.path.join(d.getVar('PKGDATA_DIR'), 'runtime', pkg)
-    if not os.path.exists(pkg_runtime_info):
+    import re
+
+    return re.sub(r"\([^)]*\)", " ", value).replace("|", " ").split()
+
+def _read_runtime_package_deps(d, pkg, keys=("RDEPENDS",)):
+    """
+    Read runtime dependency tokens of a package from pkgdata.
+    """
+    pkg_runtime_info = _pkgdata_runtime_file(d, pkg)
+    if not pkg_runtime_info:
         return []
 
     pkg_data = oe.packagedata.read_pkgdatafile(pkg_runtime_info)
-    # pkgdata stores package-scoped dependency keys (e.g. RDEPENDS:busybox).
-    # Fall back to plain RDEPENDS for compatibility with possible format changes.
-    raw_rdepends = pkg_data.get(f"RDEPENDS:{pkg}") or pkg_data.get("RDEPENDS") or ""
 
-    # pkgdata may include version constraints and alternation markers.
-    # Keep the plain dependency tokens only.
     deps = []
-    for dep in raw_rdepends.replace("|", " ").split():
-        if dep in ["(", ")", "=", ">=", "<=", ">", "<", "|"]:
-            continue
-        dep = dep.split("(", 1)[0].strip()
-        if dep:
-            deps.append(dep)
+    for key in keys:
+        # Dependency keys are package-scoped (e.g. RDEPENDS:busybox) and the
+        # scope may differ from the token used to look the file up.
+        for name, value in pkg_data.items():
+            if name != key and not name.startswith(key + ":"):
+                continue
+            for dep in _split_dep_tokens(value):
+                if dep not in deps:
+                    deps.append(dep)
     return deps
 
 def list_runtime_recipes_from_depends(d, depends):
@@ -955,6 +1015,9 @@ def export_cyclonedx(d):
                     existing_ref = existing_component.get("bom-ref")
                     if existing_ref:
                         directly_installed_component_refs.add(existing_ref)
+                # Redirect references to the component that was dropped as a duplicate.
+                if existing_component.get("bom-ref"):
+                    global_bom_ref_dedup_map[pn_pkg["bom-ref"]] = existing_component["bom-ref"]
                 continue
 
             # Add scope field to indicate runtime vs build-time component
@@ -971,13 +1034,23 @@ def export_cyclonedx(d):
             # This fixes multi-output builds where shared components would get the wrong serial
             vex["vulnerabilities"].append(pn_cve)
 
-        # Add dependencies
+    # Add dependencies.
+    # Runtime edges derived from pkgdata cover RRECOMMENDS, per-package RDEPENDS
+    # and generated shlib dependencies, which the recipe metadata alone misses.
+    runtime_edges = {}
+    if not (d.getVar("CYCLONEDX_EXPORT_DEPENDS") or "").split():
+        runtime_edges = build_runtime_dependency_edges(d)
+
     for pkg in recipes:
         pn_list = copy.deepcopy(pn_lists[pkg])
 
         deps = pn_list.get("dependencies")
+        extra_depends = sorted(runtime_edges.get(pkg, ()))
         if not deps:
-            continue
+            if not extra_depends:
+                continue
+            deps = [{"ref": pn_pkg["bom-ref"], "dependsOn": []}
+                    for pn_pkg in pn_list["pkgs"] if pn_pkg.get("bom-ref")]
 
         for dep_entry in deps:
             component_ref = dep_entry["ref"]
@@ -990,7 +1063,7 @@ def export_cyclonedx(d):
 
             resolved_depends = []
 
-            for depends in dep_entry["dependsOn"]:
+            for depends in list(dep_entry["dependsOn"]) + extra_depends:
                 if depends not in image_recipe_names:
                     bb.debug(2, f"Skipping dependency {depends} - not in this image")
                     continue
@@ -1014,9 +1087,15 @@ def export_cyclonedx(d):
                     resolved_depends.append(resolved_ref)
 
             if resolved_depends:
-                updated_entry = {"ref": component_ref, "dependsOn": resolved_depends}
-                if updated_entry not in sbom["dependencies"]:
-                    sbom["dependencies"].append(updated_entry)
+                # Recipes sharing a CPE collapse onto one component, so merge
+                # instead of emitting a second node for the same bom-ref.
+                existing_entry = next((entry for entry in sbom["dependencies"]
+                                       if entry["ref"] == component_ref), None)
+                if existing_entry:
+                    existing_entry["dependsOn"].extend(
+                        ref for ref in resolved_depends if ref not in existing_entry["dependsOn"])
+                else:
+                    sbom["dependencies"].append({"ref": component_ref, "dependsOn": resolved_depends})
 
     # Add a root dependency node as the first entry.
     # It references metadata.component and points to all directly installed components.
