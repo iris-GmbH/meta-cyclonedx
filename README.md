@@ -187,6 +187,58 @@ by setting:
 CYCLONEDX_EXTRA_BOM_FILES_FAIL_ON_BROKEN_BOM_FILES = "0"
 ```
 
+### Extra Runtime Image Recipes
+
+Some images embed another complete image inside them — the most common case is a
+initramfs that is bundled into a fitImage. The embedded image has its own rootfs
+and its own components, and those components belong in the outer image's SBOM.
+
+Because the embedded image is built separately, its SBOM is generated and
+deployed independently. Use `CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES` to name the
+image recipes whose completed SBOMs should be merged into the current image's
+SBOM+VEX:
+
+```sh
+CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES = "dm-verity-image-initramfs"
+```
+
+Multiple image names are separated by spaces.
+
+**Merging behaviour:**
+
+- **Deduplication by CPE.** A component that exists in both SBOMs is kept
+  exactly once (the parent's copy wins). Dependency edges from both images
+  are preserved under the parent's `bom-ref`, so the dependency graph
+  remains complete. The surviving copy keeps the more significant of the two
+  scopes, ordered `required` > `optional` > `excluded`.
+- **Unique components** from the included image are added to the parent SBOM
+  with `scope = "required"`, unless they already declare a scope of their own.
+- **The included image itself** appears as an additional `firmware` component
+  with `scope = "required"` in the parent SBOM and is listed as a direct
+  dependency of the parent image in the root `dependsOn` entry.
+- **VEX vulnerabilities** are merged: the included image's SBOM serial is
+  remapped to the parent's, shared `bom-ref`s are remapped, and CVE IDs are
+  deduplicated — additional `affects` entries are appended to existing
+  vulnerability records rather than creating duplicates.
+
+All scope handling above is skipped when `CYCLONEDX_ADD_COMPONENT_SCOPES` is
+disabled.
+
+**Task ordering** is handled automatically. BitBake injects a
+`do_deploy_cyclonedx` dependency for each listed image into the parent's
+`do_rootfs`, so the included SBOM symlink is guaranteed to be on disk before
+the export runs.
+
+The SBOM is located by the standard `IMAGE_LINK_NAME` symlink convention:
+
+```
+${CYCLONEDX_EXPORT_DIR}/{img_name}-{MACHINE}.cyclonedx.bom.json
+```
+
+If the symlink does not exist (e.g. the image name is wrong or the included
+image was not built), a warning is emitted and the image is skipped without
+failing the build.
+
 ### Component Scopes
 
 When including both runtime and build-time packages, meta-cyclonedx uses
