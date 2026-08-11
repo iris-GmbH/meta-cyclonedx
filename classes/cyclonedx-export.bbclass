@@ -528,28 +528,26 @@ def get_recipe_dependencies(d):
         resolved_deps.add(dep)
     return list(resolved_deps)
 
-def resolve_dependency_ref(depends, bom_ref_map, alias_map):
+def resolve_dependency_refs(depends, recipe_refs, component_recipes, ref_recipes):
     """
-    Replace dependency name by his bom-ref attribute
+    Replace a dependency token by the bom-refs of every component its recipe
+    contributes. A recipe with several CVE_PRODUCT names yields one component
+    per name and the dependency applies to all of them.
     """
 
-    # Direct
-    if depends in bom_ref_map:
-        return bom_ref_map[depends]["bom-ref"]
-
-    # By Alias
-    if depends in alias_map:
-        real_name = alias_map[depends]
-        if real_name in bom_ref_map:
-            return bom_ref_map[real_name]["bom-ref"]
-
+    # Recipe name
+    if depends in recipe_refs:
+        recipe = depends
+    # Component name, which may differ from the recipe name
+    elif depends in component_recipes:
+        recipe = component_recipes[depends]
     # If depends is already a bom-ref
-    for comp in bom_ref_map.values():
-        if depends == comp["bom-ref"]:
-            return depends
+    elif depends in ref_recipes:
+        recipe = ref_recipes[depends]
+    else:
+        return []
 
-    # Return None if no solution found
-    return None
+    return list(recipe_refs[recipe])
 
 def generate_packages_list(d, products_names, version):
     """
@@ -965,10 +963,10 @@ def export_cyclonedx(d):
     # Track direct-install components without persisting debug properties in output.
     directly_installed_component_refs = set()
 
-    # Create a bom_ref_map for dependencies sanitarization
-    # And an alias_map to retrieve real pkg name
-    bom_ref_map = {}
-    alias_map = {}
+    # Maps used to turn a dependency token into the components of its recipe
+    recipe_refs = {}
+    component_recipes = {}
+    ref_recipes = {}
     # Global deduplication map that tracks all duplicate bom-refs across all recipes
     global_bom_ref_dedup_map = {}
 
@@ -995,13 +993,11 @@ def export_cyclonedx(d):
             global_bom_ref_dedup_map.update(pn_list["bom_ref_dedup_map"])
 
         for pn_pkg in pn_list["pkgs"]:
-            bom_ref_map[pn_pkg["name"]] = pn_pkg
-            # Map recipe name to its primary component name.
-            # Handles cases where recipe name differs from CVE_PRODUCT/BPN,
-            # e.g. recipe "sqlite3" produces component "sqlite".
-            # Only map once, to the first/primary package.
-            if pkg not in alias_map:
-                alias_map[pkg] = pn_pkg["name"]
+            # A recipe contributes one component per CVE_PRODUCT name; index them
+            # all so a dependency on the recipe reaches every alias component.
+            recipe_refs.setdefault(pkg, []).append(pn_pkg["bom-ref"])
+            component_recipes.setdefault(pn_pkg["name"], pkg)
+            ref_recipes[pn_pkg["bom-ref"]] = pkg
 
     for pkg in recipes:
         pn_list = copy.deepcopy(pn_lists[pkg])
@@ -1068,23 +1064,23 @@ def export_cyclonedx(d):
                     bb.debug(2, f"Skipping dependency {depends} - not in this image")
                     continue
 
-                resolved_ref = resolve_dependency_ref(depends, bom_ref_map, alias_map)
-                if not resolved_ref:
-                    continue
+                resolved_refs = resolve_dependency_refs(depends, recipe_refs,
+                                                        component_recipes, ref_recipes)
 
-                if resolved_ref in global_bom_ref_dedup_map:
-                    resolved_ref = global_bom_ref_dedup_map[resolved_ref]
+                for resolved_ref in resolved_refs:
+                    if resolved_ref in global_bom_ref_dedup_map:
+                        resolved_ref = global_bom_ref_dedup_map[resolved_ref]
 
-                if resolved_ref == component_ref:
-                    continue
+                    if resolved_ref == component_ref:
+                        continue
 
-                # Verify that the component exists in the SBOM
-                # If it was filtered out by CPE deduplication, skip this dependency entry
-                if not any(comp["bom-ref"] == resolved_ref for comp in sbom["components"]):
-                    continue
+                    # Verify that the component exists in the SBOM
+                    # If it was filtered out by CPE deduplication, skip this dependency entry
+                    if not any(comp["bom-ref"] == resolved_ref for comp in sbom["components"]):
+                        continue
 
-                if resolved_ref not in resolved_depends:
-                    resolved_depends.append(resolved_ref)
+                    if resolved_ref not in resolved_depends:
+                        resolved_depends.append(resolved_ref)
 
             if resolved_depends:
                 # Recipes sharing a CPE collapse onto one component, so merge
