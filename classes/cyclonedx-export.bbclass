@@ -225,7 +225,7 @@ python do_populate_cyclonedx() {
     extra_roots = []
     for bom_path in (d.getVar("CYCLONEDX_EXTRA_BOM_FILES") or "").split():
         if not os.path.exists(bom_path):
-            if d.GetVar("CYCLONEDX_EXTRA_BOM_FILES_FAIL_ON_BROKEN_BOM_FILES") = "0":
+            if d.GetVar("CYCLONEDX_EXTRA_BOM_FILES_FAIL_ON_BROKEN_BOM_FILES") == "0":
                 bb.warn(f"CYCLONEDX_EXTRA_BOM_FILES: {pn}: no such file, skipping: {bom_path}")
                 continue
             else:
@@ -233,7 +233,7 @@ python do_populate_cyclonedx() {
         try:
             extra_bom = read_json(bom_path)
         except Exception as e:
-            if d.GetVar("CYCLONEDX_EXTRA_BOM_FILES_FAIL_ON_BROKEN_BOM_FILES") = "0":
+            if d.GetVar("CYCLONEDX_EXTRA_BOM_FILES_FAIL_ON_BROKEN_BOM_FILES") == "0":
                 bb.warn(f"CYCLONEDX_EXTRA_BOM_FILES: {pn}: cannot parse {bom_path}, skipping: {e}")
                 continue
             else:
