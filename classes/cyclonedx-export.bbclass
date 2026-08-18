@@ -1017,7 +1017,11 @@ def export_cyclonedx(d):
             # This fixes multi-output builds where shared components would get the wrong serial
             vex["vulnerabilities"].append(pn_cve)
 
-        # Add dependencies
+    # Sort components by name for a stable, human-readable order.
+    # "recipes" is a set, so insertion order above is non-deterministic across builds.
+    sbom["components"].sort(key=lambda c: (c["name"], c["version"]))
+
+    # Add dependencies
     for pkg in recipes:
         pn_list = copy.deepcopy(pn_lists[pkg])
 
@@ -1134,6 +1138,9 @@ def export_cyclonedx(d):
             if "ref" in affect:
                 affect["ref"] = affect["ref"].replace(
                     d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER'), sbom_serial_number)
+
+    # Sort vulnerabilities by CVE id for a stable, human-readable order.
+    vex["vulnerabilities"].sort(key=lambda v: v["id"])
 
     export_dir = d.getVar("CYCLONEDX_EXPORT_DIR")
     tmp_export_dir = d.getVar("CYCLONEDX_TMP_EXPORT_DIR")
