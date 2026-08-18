@@ -156,14 +156,6 @@ generates the document while building should order the task accordingly:
 addtask do_populate_cyclonedx after do_compile
 ```
 
-By default, if a specified document does not exist or cannot be parsed,
-the build will fail. You may change this behavior to emit only a warning instead
-by setting:
-
-```sh
-CYCLONEDX_EXTRA_BOM_FILES_FAIL_ON_BROKEN_BOM_FILES = "0"
-```
-
 The components and dependency edges are merged into the image BOM verbatim.
 They already carry their own bom-refs, purls and dependency edges, so the CPE
 deduplication and the recipe-name dependency remapping applied to Yocto-derived
@@ -187,8 +179,13 @@ Both steps are needed: CycloneDX does not repeat `metadata.component` inside
 them the merged tree would hang off an unresolvable bom-ref and the modules
 would float unattributed at the top level of the BOM.
 
-A missing or unparsable file produces a warning and is skipped, so a build does
-not fail because a language ecosystem could not emit its SBOM.
+By default, a missing or unparsable file will cause the build to fail.
+You may change this behavior to emit only a warning instead
+by setting:
+
+```sh
+CYCLONEDX_EXTRA_BOM_FILES_FAIL_ON_BROKEN_BOM_FILES = "0"
+```
 
 ### Component Scopes
 
