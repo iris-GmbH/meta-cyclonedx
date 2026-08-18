@@ -669,28 +669,26 @@ def get_recipe_dependencies(d):
         resolved_deps.add(dep)
     return list(resolved_deps)
 
-def resolve_dependency_ref(depends, bom_ref_map, alias_map):
+def resolve_dependency_refs(depends, recipe_refs, component_recipes, ref_recipes):
     """
-    Replace dependency name by his bom-ref attribute
+    Replace a dependency token by the bom-refs of every component its recipe
+    contributes. A recipe with several CVE_PRODUCT names yields one component
+    per name and the dependency applies to all of them.
     """
 
-    # Direct
-    if depends in bom_ref_map:
-        return bom_ref_map[depends]["bom-ref"]
-
-    # By Alias
-    if depends in alias_map:
-        real_name = alias_map[depends]
-        if real_name in bom_ref_map:
-            return bom_ref_map[real_name]["bom-ref"]
-
+    # Recipe name
+    if depends in recipe_refs:
+        recipe = depends
+    # Component name, which may differ from the recipe name
+    elif depends in component_recipes:
+        recipe = component_recipes[depends]
     # If depends is already a bom-ref
-    for comp in bom_ref_map.values():
-        if depends == comp["bom-ref"]:
-            return depends
+    elif depends in ref_recipes:
+        recipe = ref_recipes[depends]
+    else:
+        return []
 
-    # Return None if no solution found
-    return None
+    return list(recipe_refs[recipe])
 
 def generate_packages_list(d, products_names, version):
     """
@@ -872,19 +870,72 @@ def list_image_install_recipes(d):
                     continue
                 seen_pkg_tokens.add(current_pkg_token)
 
-                for dep_pkg in _read_runtime_package_rdepends(d, current_pkg_token):
+                for dep_pkg in _read_runtime_package_deps(d, current_pkg_token):
                     dep_recipe = resolve_and_record(dep_pkg)
                     if dep_recipe and dep_recipe.startswith("packagegroup-") and dep_pkg not in seen_pkg_tokens:
                         queue.append(dep_pkg)
 
     return recipes
 
+def build_runtime_dependency_edges(d):
+    """
+    Build recipe -> recipes runtime edges from the pkgdata of the packages that
+    are actually installed in the image.
+
+    Unlike the recipe's parse-time RDEPENDS:${PN}, pkgdata also carries
+    RRECOMMENDS, the dependencies of every other package a recipe produces and
+    the shared library dependencies generated during do_package.
+    """
+    from oe.rootfs import image_list_installed_packages
+
+    # runtime-reverse only indexes package names, so collect the RPROVIDES of
+    # the installed packages to be able to resolve virtual dependencies too.
+    providers = {}
+    installed_recipes = {}
+    for pkg in list(image_list_installed_packages(d)):
+        pkg_file = _pkgdata_runtime_file(d, pkg)
+        if not pkg_file:
+            continue
+        pkg_data = oe.packagedata.read_pkgdatafile(pkg_file)
+        recipe = pkg_data.get("PN")
+        if not recipe:
+            continue
+        installed_recipes[pkg] = recipe
+        providers[pkg] = recipe
+        for name, value in pkg_data.items():
+            if name == "RPROVIDES" or name.startswith("RPROVIDES:"):
+                for token in _split_dep_tokens(value):
+                    providers.setdefault(token, recipe)
+
+    edges = {}
+    for pkg, recipe in installed_recipes.items():
+        for dep in _read_runtime_package_deps(d, pkg, ("RDEPENDS", "RRECOMMENDS")):
+            dep_recipe = providers.get(dep) or _resolve_runtime_token_to_recipe(d, dep)
+            if not dep_recipe or dep_recipe == recipe:
+                continue
+            edges.setdefault(recipe, set()).add(dep_recipe)
+    return edges
+
+def _pkgdata_runtime_file(d, token):
+    """
+    Locate the pkgdata file for a runtime token.
+
+    runtime-reverse/ is keyed by the final package name and by RPROVIDES, while
+    runtime/ is keyed by the pre-rename package name used inside RDEPENDS.
+    """
+    pkgdata_dir = d.getVar('PKGDATA_DIR')
+    for subdir in ('runtime-reverse', 'runtime'):
+        path = os.path.join(pkgdata_dir, subdir, token)
+        if os.path.exists(path):
+            return path
+    return None
+
 def _resolve_runtime_token_to_recipe(d, token):
     """
     Resolve a package/runtime token (or virtual/* token) to recipe PN.
     """
-    pkg_info = os.path.join(d.getVar('PKGDATA_DIR'), 'runtime-reverse', token)
-    if os.path.exists(pkg_info):
+    pkg_info = _pkgdata_runtime_file(d, token)
+    if pkg_info:
         pkg_data = oe.packagedata.read_pkgdatafile(pkg_info)
         return pkg_data.get("PN")
 
@@ -893,28 +944,35 @@ def _resolve_runtime_token_to_recipe(d, token):
 
     return None
 
-def _read_runtime_package_rdepends(d, pkg):
+def _split_dep_tokens(value):
     """
-    Read runtime dependencies of a package token from pkgdata/runtime.
+    Strip version constraints and alternation markers from a pkgdata dependency
+    value and return the plain tokens.
     """
-    pkg_runtime_info = os.path.join(d.getVar('PKGDATA_DIR'), 'runtime', pkg)
-    if not os.path.exists(pkg_runtime_info):
+    import re
+
+    return re.sub(r"\([^)]*\)", " ", value).replace("|", " ").split()
+
+def _read_runtime_package_deps(d, pkg, keys=("RDEPENDS",)):
+    """
+    Read runtime dependency tokens of a package from pkgdata.
+    """
+    pkg_runtime_info = _pkgdata_runtime_file(d, pkg)
+    if not pkg_runtime_info:
         return []
 
     pkg_data = oe.packagedata.read_pkgdatafile(pkg_runtime_info)
-    # pkgdata stores package-scoped dependency keys (e.g. RDEPENDS:busybox).
-    # Fall back to plain RDEPENDS for compatibility with possible format changes.
-    raw_rdepends = pkg_data.get(f"RDEPENDS:{pkg}") or pkg_data.get("RDEPENDS") or ""
 
-    # pkgdata may include version constraints and alternation markers.
-    # Keep the plain dependency tokens only.
     deps = []
-    for dep in raw_rdepends.replace("|", " ").split():
-        if dep in ["(", ")", "=", ">=", "<=", ">", "<", "|"]:
-            continue
-        dep = dep.split("(", 1)[0].strip()
-        if dep:
-            deps.append(dep)
+    for key in keys:
+        # Dependency keys are package-scoped (e.g. RDEPENDS:busybox) and the
+        # scope may differ from the token used to look the file up.
+        for name, value in pkg_data.items():
+            if name != key and not name.startswith(key + ":"):
+                continue
+            for dep in _split_dep_tokens(value):
+                if dep not in deps:
+                    deps.append(dep)
     return deps
 
 def list_runtime_recipes_from_depends(d, depends):
@@ -1046,10 +1104,10 @@ def export_cyclonedx(d):
     # Track direct-install components without persisting debug properties in output.
     directly_installed_component_refs = set()
 
-    # Create a bom_ref_map for dependencies sanitarization
-    # And an alias_map to retrieve real pkg name
-    bom_ref_map = {}
-    alias_map = {}
+    # Maps used to turn a dependency token into the components of its recipe
+    recipe_refs = {}
+    component_recipes = {}
+    ref_recipes = {}
     # Global deduplication map that tracks all duplicate bom-refs across all recipes
     global_bom_ref_dedup_map = {}
 
@@ -1076,13 +1134,11 @@ def export_cyclonedx(d):
             global_bom_ref_dedup_map.update(pn_list["bom_ref_dedup_map"])
 
         for pn_pkg in pn_list["pkgs"]:
-            bom_ref_map[pn_pkg["name"]] = pn_pkg
-            # Map recipe name to its primary component name.
-            # Handles cases where recipe name differs from CVE_PRODUCT/BPN,
-            # e.g. recipe "sqlite3" produces component "sqlite".
-            # Only map once, to the first/primary package.
-            if pkg not in alias_map:
-                alias_map[pkg] = pn_pkg["name"]
+            # A recipe contributes one component per CVE_PRODUCT name; index them
+            # all so a dependency on the recipe reaches every alias component.
+            recipe_refs.setdefault(pkg, []).append(pn_pkg["bom-ref"])
+            component_recipes.setdefault(pn_pkg["name"], pkg)
+            ref_recipes[pn_pkg["bom-ref"]] = pkg
 
     for pkg in recipes:
         pn_list = copy.deepcopy(pn_lists[pkg])
@@ -1096,6 +1152,9 @@ def export_cyclonedx(d):
                     existing_ref = existing_component.get("bom-ref")
                     if existing_ref:
                         directly_installed_component_refs.add(existing_ref)
+                # Redirect references to the component that was dropped as a duplicate.
+                if existing_component.get("bom-ref"):
+                    global_bom_ref_dedup_map[pn_pkg["bom-ref"]] = existing_component["bom-ref"]
                 continue
 
             # Add scope field to indicate runtime vs build-time component
@@ -1112,13 +1171,23 @@ def export_cyclonedx(d):
             # This fixes multi-output builds where shared components would get the wrong serial
             vex["vulnerabilities"].append(pn_cve)
 
-        # Add dependencies
+    # Add dependencies.
+    # Runtime edges derived from pkgdata cover RRECOMMENDS, per-package RDEPENDS
+    # and generated shlib dependencies, which the recipe metadata alone misses.
+    runtime_edges = {}
+    if not (d.getVar("CYCLONEDX_EXPORT_DEPENDS") or "").split():
+        runtime_edges = build_runtime_dependency_edges(d)
+
     for pkg in recipes:
         pn_list = copy.deepcopy(pn_lists[pkg])
 
         deps = pn_list.get("dependencies")
+        extra_depends = sorted(runtime_edges.get(pkg, ()))
         if not deps:
-            continue
+            if not extra_depends:
+                continue
+            deps = [{"ref": pn_pkg["bom-ref"], "dependsOn": []}
+                    for pn_pkg in pn_list["pkgs"] if pn_pkg.get("bom-ref")]
 
         for dep_entry in deps:
             component_ref = dep_entry["ref"]
@@ -1131,33 +1200,39 @@ def export_cyclonedx(d):
 
             resolved_depends = []
 
-            for depends in dep_entry["dependsOn"]:
+            for depends in list(dep_entry["dependsOn"]) + extra_depends:
                 if depends not in image_recipe_names:
                     bb.debug(2, f"Skipping dependency {depends} - not in this image")
                     continue
 
-                resolved_ref = resolve_dependency_ref(depends, bom_ref_map, alias_map)
-                if not resolved_ref:
-                    continue
+                resolved_refs = resolve_dependency_refs(depends, recipe_refs,
+                                                        component_recipes, ref_recipes)
 
-                if resolved_ref in global_bom_ref_dedup_map:
-                    resolved_ref = global_bom_ref_dedup_map[resolved_ref]
+                for resolved_ref in resolved_refs:
+                    if resolved_ref in global_bom_ref_dedup_map:
+                        resolved_ref = global_bom_ref_dedup_map[resolved_ref]
 
-                if resolved_ref == component_ref:
-                    continue
+                    if resolved_ref == component_ref:
+                        continue
 
-                # Verify that the component exists in the SBOM
-                # If it was filtered out by CPE deduplication, skip this dependency entry
-                if not any(comp["bom-ref"] == resolved_ref for comp in sbom["components"]):
-                    continue
+                    # Verify that the component exists in the SBOM
+                    # If it was filtered out by CPE deduplication, skip this dependency entry
+                    if not any(comp["bom-ref"] == resolved_ref for comp in sbom["components"]):
+                        continue
 
-                if resolved_ref not in resolved_depends:
-                    resolved_depends.append(resolved_ref)
+                    if resolved_ref not in resolved_depends:
+                        resolved_depends.append(resolved_ref)
 
             if resolved_depends:
-                updated_entry = {"ref": component_ref, "dependsOn": resolved_depends}
-                if updated_entry not in sbom["dependencies"]:
-                    sbom["dependencies"].append(updated_entry)
+                # Recipes sharing a CPE collapse onto one component, so merge
+                # instead of emitting a second node for the same bom-ref.
+                existing_entry = next((entry for entry in sbom["dependencies"]
+                                       if entry["ref"] == component_ref), None)
+                if existing_entry:
+                    existing_entry["dependsOn"].extend(
+                        ref for ref in resolved_depends if ref not in existing_entry["dependsOn"])
+                else:
+                    sbom["dependencies"].append({"ref": component_ref, "dependsOn": resolved_depends})
 
     # Fold in pre-resolved CycloneDX fragments contributed by recipes.
     #
@@ -1224,11 +1299,39 @@ def export_cyclonedx(d):
     # Replace SBOM serial placeholder in VEX vulnerabilities
     # This must be done after all vulnerabilities are collected to ensure each image
     # gets its own SBOM serial number in multi-output builds (e.g., rootfs + initramfs)
+    sbom_refs = {comp["bom-ref"] for comp in sbom["components"]}
+    serial_placeholder = d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER')
+    resolved_vulns = []
+    covered_refs = {}
     for vuln in vex["vulnerabilities"]:
+        affects = []
         for affect in vuln.get("affects", []):
-            if "ref" in affect:
-                affect["ref"] = affect["ref"].replace(
-                    d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER'), sbom_serial_number)
+            if "ref" not in affect:
+                affects.append(affect)
+                continue
+
+            prefix, _, bom_ref = affect["ref"].rpartition("#")
+            bom_ref = global_bom_ref_dedup_map.get(bom_ref, bom_ref)
+            # A component dropped by CPE deduplication is covered by its duplicate.
+            if bom_ref not in sbom_refs:
+                continue
+
+            ref = f"{prefix}#{bom_ref}".replace(serial_placeholder, sbom_serial_number)
+            if not any(existing.get("ref") == ref for existing in affects):
+                affects.append({**affect, "ref": ref})
+
+        if not affects:
+            continue
+
+        # Recipes sharing a CPE report the same CVE, so keep only the first statement.
+        refs = {affect["ref"] for affect in affects if "ref" in affect}
+        if refs and refs.issubset(covered_refs.get(vuln["id"], set())):
+            continue
+        covered_refs.setdefault(vuln["id"], set()).update(refs)
+
+        vuln["affects"] = affects
+        resolved_vulns.append(vuln)
+    vex["vulnerabilities"] = resolved_vulns
 
     export_dir = d.getVar("CYCLONEDX_EXPORT_DIR")
     tmp_export_dir = d.getVar("CYCLONEDX_TMP_EXPORT_DIR")
