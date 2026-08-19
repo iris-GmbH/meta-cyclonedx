@@ -840,9 +840,14 @@ def list_runtime_recipes_from_packages(d):
 
 def list_image_install_recipes(d):
     """
-    Return recipe names for packages explicitly requested in IMAGE_INSTALL.
+    Return recipe names for packages explicitly requested for the image.
+
+    PACKAGE_INSTALL is the authoritative list handed to the package manager and
+    normally expands IMAGE_INSTALL, but initramfs and other minimal images set it
+    directly and leave IMAGE_INSTALL empty, so both are considered.
     """
-    image_install = d.expand(d.getVar("IMAGE_INSTALL") or "").split()
+    image_install = (d.expand(d.getVar("PACKAGE_INSTALL") or "").split()
+                     + d.expand(d.getVar("IMAGE_INSTALL") or "").split())
     recipes = set()
 
     def resolve_and_record(pkg_token):
@@ -851,16 +856,18 @@ def list_image_install_recipes(d):
             recipes.add(recipe)
         return recipe
 
+    seen_tokens = set()
     for token in image_install:
-        if not token:
+        if not token or token in seen_tokens:
             continue
+        seen_tokens.add(token)
 
         root_recipe = resolve_and_record(token)
         if not root_recipe:
-            bb.debug(2, f"Could not map IMAGE_INSTALL package '{token}' to a recipe token")
+            bb.debug(2, f"Could not map requested package '{token}' to a recipe token")
             continue
 
-        # If IMAGE_INSTALL contains a packagegroup, treat packages brought in by
+        # If the request is a packagegroup, treat packages brought in by
         # that packagegroup as direct image-install components too.
         if root_recipe.startswith("packagegroup-"):
             queue = [token]
