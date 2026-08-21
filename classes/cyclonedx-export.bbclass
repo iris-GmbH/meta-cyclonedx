@@ -69,6 +69,9 @@ CYCLONEDX_EXTRA_BOM_FILES ??= ""
 # cannot be parsed. Set to "0" to emit a warning instead.
 CYCLONEDX_EXTRA_BOM_FILES_FAIL_ON_BROKEN_BOM_FILES ??= "1"
 
+# Space-separated list of image recipe names whose completed SBOMs are merged into this image's SBOM+VEX.
+CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES ??= ""
+
 # Add component licenses (as specified within the recipe) to the SBOM
 CYCLONEDX_ADD_COMPONENT_LICENSES ??= "1"
 
@@ -362,6 +365,8 @@ do_populate_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_PNDATA}/${SSTATE_PKGARCH
 do_populate_cyclonedx[vardeps] += "CYCLONEDX_PNDATA"
 do_populate_cyclonedx[vardeps] += "CYCLONEDX_COMPONENT_PROPERTIES"
 do_populate_cyclonedx[vardeps] += "CYCLONEDX_EXTRA_BOM_FILES"
+do_populate_cyclonedx[vardeps] += "CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES"
+
 python do_populate_cyclonedx_setscene() {
     sstate_setscene(d)
 }
@@ -938,6 +943,36 @@ def list_runtime_recipes_from_depends(d, depends):
             runtime_recipes.add(recipe)
     return runtime_recipes
 
+def highest_priority_scope(*scopes):
+    """
+    Return the most significant of the given CycloneDX scopes, ordered
+    required > optional > excluded. Unknown or missing values are ignored,
+    and None is returned when no scope is known.
+    """
+    priority = ["required", "optional", "excluded"]
+    known = [scope for scope in scopes if scope in priority]
+    if not known:
+        return None
+    return min(known, key=priority.index)
+
+def resolve_extra_image_sbom_paths(d):
+    # Paths follow IMAGE_LINK_NAME convention; all images share CYCLONEDX_EXPORT_DIR = DEPLOY_DIR_IMAGE.
+    export_dir = d.getVar("CYCLONEDX_EXPORT_DIR")
+    machine = d.getVar("MACHINE")
+    current_pn = d.getVar("PN")
+    results = []
+    for img_name in (d.getVar("CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES") or "").split():
+        if img_name == current_pn:
+            bb.warn(f"CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES: skipping self-reference '{img_name}'")
+            continue
+        link_basename = f"{img_name}-{machine}"
+        results.append((
+            img_name,
+            os.path.join(export_dir, f"{link_basename}.cyclonedx.bom.json"),
+            os.path.join(export_dir, f"{link_basename}.cyclonedx.vex.json"),
+        ))
+    return results
+
 def export_cyclonedx(d):
     """
     Select CVE and package information and runtime packages and output them
@@ -1222,6 +1257,151 @@ def export_cyclonedx(d):
             if root_ref in extra_seen_refs and root_ref not in owner_entry["dependsOn"]:
                 owner_entry["dependsOn"].append(root_ref)
 
+    # Fold in complete SBOMs from other images listed in CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES.
+    # Components shared by CPE are deduplicated (parent wins); unique components are added with scope "required".
+    extra_seen_image_refs = {c["bom-ref"] for c in sbom["components"] if c.get("bom-ref")}
+    for img_name, img_sbom_path, img_vex_path in resolve_extra_image_sbom_paths(d):
+        if not os.path.exists(img_sbom_path):
+            bb.warn(f"CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES: SBOM not found for {img_name}: {img_sbom_path}")
+            continue
+        try:
+            img_sbom_data = read_json(img_sbom_path)
+        except Exception as e:
+            bb.warn(f"CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES: cannot parse SBOM for {img_name}: {e}")
+            continue
+
+        img_spec = img_sbom_data.get("specVersion")
+        if img_spec and img_spec != spec_version:
+            bb.warn(f"CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES: {img_name} specVersion {img_spec} "
+                    f"differs from parent {spec_version}; merging anyway")
+
+        # The UUID portion of the included SBOM's serialNumber appears verbatim in its VEX affects refs.
+        included_serial = remove_prefix(img_sbom_data.get("serialNumber") or "", "urn:uuid:")
+
+        # Map included bom-refs to parent bom-refs for components that share the same CPE.
+        included_bom_ref_remap = {}
+        for inc_comp in img_sbom_data.get("components") or []:
+            inc_cpe = inc_comp.get("cpe")
+            inc_ref = inc_comp.get("bom-ref")
+            if not inc_ref or not inc_cpe:
+                continue
+            existing = next(
+                (c for c in sbom["components"] if c.get("cpe") == inc_cpe), None
+            )
+            if existing:
+                included_bom_ref_remap[inc_ref] = existing["bom-ref"]
+                if d.getVar("CYCLONEDX_ADD_COMPONENT_SCOPES") == "1":
+                    merged_scope = highest_priority_scope(existing.get("scope"), inc_comp.get("scope"))
+                    if merged_scope:
+                        existing["scope"] = merged_scope
+
+        # Add components unique to the included image (no CPE match in the parent SBOM).
+        for inc_comp in img_sbom_data.get("components") or []:
+            inc_ref = inc_comp.get("bom-ref")
+            if inc_ref and inc_ref in included_bom_ref_remap:
+                continue
+            if inc_ref and inc_ref in extra_seen_image_refs:
+                continue
+            if d.getVar("CYCLONEDX_ADD_COMPONENT_SCOPES") == "1" and "scope" not in inc_comp:
+                inc_comp = dict(inc_comp)
+                inc_comp["scope"] = "required"
+            sbom["components"].append(inc_comp)
+            if inc_ref:
+                extra_seen_image_refs.add(inc_ref)
+
+        # Represent the included image itself as a firmware component in the parent SBOM.
+        inc_metadata_comp = (img_sbom_data.get("metadata") or {}).get("component") or {}
+        img_firmware_ref = str(uuid.uuid4())
+        img_firmware_comp = {
+            "type": "firmware",
+            "name": img_name,
+            "version": inc_metadata_comp.get("version") or "unknown",
+            "bom-ref": img_firmware_ref,
+        }
+        if d.getVar("CYCLONEDX_ADD_COMPONENT_SCOPES") == "1":
+            img_firmware_comp["scope"] = "required"
+        sbom["components"].append(img_firmware_comp)
+        extra_seen_image_refs.add(img_firmware_ref)
+        # The embedded image is a direct child of the parent image in the dependency tree.
+        directly_installed_component_refs.add(img_firmware_ref)
+
+        inc_metadata_ref = inc_metadata_comp.get("bom-ref")
+        if inc_metadata_ref:
+            included_bom_ref_remap[inc_metadata_ref] = img_firmware_ref
+
+        def remap_ref(ref, _remap=included_bom_ref_remap):
+            return _remap.get(ref, ref)
+
+        # Add dependency edges from the included SBOM, remapping shared bom-refs.
+        # Merge into an existing dep entry when the ref is already present in the parent.
+        for dep_entry in img_sbom_data.get("dependencies") or []:
+            r_ref = remap_ref(dep_entry.get("ref", ""))
+            if not r_ref or not any(c.get("bom-ref") == r_ref for c in sbom["components"]):
+                continue
+            r_depends = []
+            for dr in dep_entry.get("dependsOn") or []:
+                rdr = remap_ref(dr)
+                if rdr == r_ref:
+                    continue
+                if not any(c.get("bom-ref") == rdr for c in sbom["components"]):
+                    continue
+                if rdr not in r_depends:
+                    r_depends.append(rdr)
+            if not r_depends:
+                continue
+            existing_entry = next((x for x in sbom["dependencies"] if x["ref"] == r_ref), None)
+            if existing_entry:
+                for rdr in r_depends:
+                    if rdr not in existing_entry["dependsOn"]:
+                        existing_entry["dependsOn"].append(rdr)
+            else:
+                sbom["dependencies"].append({"ref": r_ref, "dependsOn": r_depends})
+
+        bb.debug(1, f"CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES: merged {img_name} "
+                    f"({len(img_sbom_data.get('components') or [])} components)")
+
+        # Merge VEX vulnerabilities: remap included SBOM serial and shared bom-refs, avoid CVE ID duplicates.
+        if not os.path.exists(img_vex_path):
+            bb.debug(1, f"CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES: no VEX for {img_name}: {img_vex_path}")
+            continue
+        try:
+            img_vex_data = read_json(img_vex_path)
+        except Exception as e:
+            bb.warn(f"CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES: cannot parse VEX for {img_name}: {e}")
+            continue
+
+        for inc_vuln in img_vex_data.get("vulnerabilities") or []:
+            cve_id = inc_vuln.get("id")
+            if not cve_id:
+                continue
+            remapped_affects = []
+            for affect in inc_vuln.get("affects") or []:
+                ref = affect.get("ref", "")
+                if included_serial and included_serial in ref:
+                    ref = ref.replace(included_serial, sbom_serial_number)
+                if "#" in ref:
+                    prefix, bom_ref_part = ref.rsplit("#", 1)
+                    ref = f"{prefix}#{remap_ref(bom_ref_part)}"
+                bom_ref_in_ref = ref.rsplit("#", 1)[-1] if "#" in ref else ""
+                if bom_ref_in_ref and not any(
+                    c.get("bom-ref") == bom_ref_in_ref for c in sbom["components"]
+                ):
+                    continue
+                remapped_affects.append({"ref": ref})
+            if not remapped_affects:
+                continue
+            existing_vuln = next(
+                (v for v in vex["vulnerabilities"] if v.get("id") == cve_id), None
+            )
+            if existing_vuln:
+                for a in remapped_affects:
+                    if a not in existing_vuln["affects"]:
+                        existing_vuln["affects"].append(a)
+            else:
+                merged_vuln = dict(inc_vuln)
+                merged_vuln["affects"] = remapped_affects
+                vex["vulnerabilities"].append(merged_vuln)
+
     # Add a root dependency node as the first entry.
     # It references metadata.component and points to all directly installed components.
     directly_installed_refs = sorted(directly_installed_component_refs)
@@ -1236,10 +1416,16 @@ def export_cyclonedx(d):
     # This must be done after all vulnerabilities are collected to ensure each image
     # gets its own SBOM serial number in multi-output builds (e.g., rootfs + initramfs)
     for vuln in vex["vulnerabilities"]:
+        affects = []
         for affect in vuln.get("affects", []):
             if "ref" in affect:
                 affect["ref"] = affect["ref"].replace(
                     d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER'), sbom_serial_number)
+            # Refs merged from another image only become comparable to this
+            # document's own, still-templated refs once the serial is substituted.
+            if affect not in affects:
+                affects.append(affect)
+        vuln["affects"] = affects
 
     # Sort vulnerabilities by CVE id for a stable, human-readable order.
     vex["vulnerabilities"].sort(key=lambda v: v["id"])
@@ -1293,6 +1479,9 @@ SSTATETASKS += "do_deploy_cyclonedx"
 do_deploy_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_TMP_EXPORT_DIR}"
 do_deploy_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_EXPORT_DIR}"
 do_deploy_cyclonedx[vardeps] += "CYCLONEDX_EXPORT_DIR"
+# Link names are stable (no timestamp) so they can safely invalidate sstate without churn.
+do_deploy_cyclonedx[vardeps] += "CYCLONEDX_EXPORT_SBOM_LINK"
+do_deploy_cyclonedx[vardeps] += "CYCLONEDX_EXPORT_VEX_LINK"
 python do_deploy_cyclonedx_setscene() {
     sstate_setscene(d)
 }
@@ -1307,4 +1496,8 @@ python do_deploy_cyclonedx() {
 python () {
     if bb.data.inherits_class("image", d):
         bb.build.addtask("do_deploy_cyclonedx", "do_image_complete", "do_rootfs", d)
+        pn = d.getVar("PN")
+        for img in (d.getVar("CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES") or "").split():
+            if img != pn:
+                d.appendVarFlag("do_rootfs", "depends", f" {img}:do_deploy_cyclonedx")
 }
