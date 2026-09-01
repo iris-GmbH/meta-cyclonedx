@@ -80,7 +80,6 @@ CYCLONEDX_EXPORT_SBOM ??= "${CYCLONEDX_EXPORT_DIR}/bom.json"
 CYCLONEDX_EXPORT_VEX ??= "${CYCLONEDX_EXPORT_DIR}/vex.json"
 CYCLONEDX_PNDATA_WORKDIR = "${WORKDIR}/cyclonedx"
 CYCLONEDX_PNDATA = "${TMPDIR}/cyclonedx/pn"
-CYCLONEDX_BUILDTIME_DIR = "${TMPDIR}/cyclonedx/buildtime"
 
 # We need to add the sbom serial number to the list of vulnerabilites for each recipe but
 # don't know it until after we generate the sbom export header file
@@ -117,27 +116,12 @@ python () {
         bb.fatal(f"Unsupported CYCLONEDX_SPEC_VERSION: {spec_version}. Supported versions: 1.4, 1.6")
 }
 
-# Clean out buildtime dir to prepare for creating complete list of build-time package information
-python clean_buildtime_dir() {
-    if bb.utils.to_boolean(d.getVar("CYCLONEDX_RUNTIME_PACKAGES_ONLY")):
-        return
-    cyclonedx_buildtime_dir = d.getVar('CYCLONEDX_BUILDTIME_DIR')
-    bb.debug(1, f"Cleaning cyclonedx buildtime dir {cyclonedx_buildtime_dir}")
-    if os.path.exists(cyclonedx_buildtime_dir):
-        import shutil
-        shutil.rmtree(cyclonedx_buildtime_dir)
-    bb.utils.mkdirhier(cyclonedx_buildtime_dir)
-}
-addhandler clean_buildtime_dir
-clean_buildtime_dir[eventmask] = "bb.event.BuildStarted"
-
 python do_populate_cyclonedx() {
     """
     Collect package information and CVE data from all packages built for the target architecture.
     """
     from oe.cve_check import decode_cve_status
     from oe.cve_check import get_patched_cves
-    from pathlib import Path
 
     pn = d.getVar("PN")
 
@@ -303,10 +287,37 @@ python do_populate_cyclonedx() {
 
     # write partial sbom to the recipes work folder
     write_json(os.path.join(d.getVar("CYCLONEDX_PNDATA_WORKDIR"), f"{pn}.json"), pn_list)
-
-    if not bb.utils.to_boolean(d.getVar("CYCLONEDX_RUNTIME_PACKAGES_ONLY")):
-        Path(os.path.join(d.getVar("CYCLONEDX_BUILDTIME_DIR"), pn)).touch()
 }
+
+def list_buildtime_recipes(d):
+    """
+    Return every recipe (PN) whose do_populate_cyclonedx task is part of the
+    build dependency closure of the currently running task.
+
+    This is derived from BB_TASKDEPDATA, do_rootfs recursively depends on do_populate_cyclonedx
+    for its whole dependency tree (see do_rootfs[recrdeptask] below), so the task dependency
+    data is an authoritative, complete list of build-time recipes.
+    """
+    taskdepdata = d.getVar("BB_TASKDEPDATA", False)
+    if not taskdepdata:
+        bb.warn("BB_TASKDEPDATA is unavailable; build-time packages may be "
+                "missing from the CycloneDX SBOM")
+        return set()
+
+    ignored_suffixes = (d.getVar("SPECIAL_PKGSUFFIX") or "").split()
+    recipes = set()
+    for dep in taskdepdata.values():
+        pn, taskname = dep[0], dep[1]
+        if taskname != "do_populate_cyclonedx":
+            continue
+        # Mirror the filtering done by do_populate_cyclonedx itself: non-target
+        # recipes (native, cross, ...) return early and write no pn data file.
+        if any(pn.endswith(suffix) for suffix in ignored_suffixes):
+            continue
+        recipes.add(pn)
+    return recipes
+
+list_buildtime_recipes[vardepsexclude] += "BB_TASKDEPDATA"
 
 addtask do_populate_cyclonedx before do_build
 do_populate_cyclonedx[cleandirs] = "${CYCLONEDX_PNDATA_WORKDIR}"
@@ -819,8 +830,6 @@ def export_cyclonedx(d):
     # Get configured spec version
     spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
 
-    cyclonedx_buildtime_dir = d.getVar("CYCLONEDX_BUILDTIME_DIR")
-
     # Generate sbom document header
     bb.debug(2, f"Creating empty temporary sbom file with serial number {sbom_serial_number}")
     sbom_metadata = {
@@ -878,11 +887,9 @@ def export_cyclonedx(d):
     # Determine which recipes to include
     recipes = set()
     if d.getVar('CYCLONEDX_RUNTIME_PACKAGES_ONLY') == "1":
-        recipes = runtime_recipes
+        recipes = set(runtime_recipes)
     else:
-        all_available = {pn for pn in os.listdir(cyclonedx_buildtime_dir)
-                        if os.path.exists(os.path.join(cyclonedx_buildtime_dir, pn))}
-        recipes = all_available.union(runtime_recipes)
+        recipes = list_buildtime_recipes(d).union(runtime_recipes)
 
     # Always include explicitly requested recipes (e.g. optee-os embedded in fitImage)
     # Resolve virtual/* entries via PREFERRED_PROVIDER_*
@@ -944,7 +951,7 @@ def export_cyclonedx(d):
             if pkg not in alias_map:
                 alias_map[pkg] = pn_pkg["name"]
 
-    for pkg in recipes:
+    for pkg in pn_lists:
         pn_list = copy.deepcopy(pn_lists[pkg])
 
         for pn_pkg in pn_list["pkgs"]:
@@ -977,7 +984,7 @@ def export_cyclonedx(d):
     sbom["components"].sort(key=lambda c: (c["name"], c["version"]))
 
     # Add dependencies
-    for pkg in recipes:
+    for pkg in pn_lists:
         pn_list = copy.deepcopy(pn_lists[pkg])
 
         deps = pn_list.get("dependencies")
