@@ -924,6 +924,10 @@ def export_cyclonedx(d):
     pn_lists = {}
     pkgarchs = d.getVar("SSTATE_ARCHS").split()
     pkgarchs.reverse()
+
+    if "all" not in pkgarchs:
+        pkgarchs.append("all")
+
     # first loop to fill the dictionary
     for pkg in recipes:
         for pkgarch in pkgarchs:
