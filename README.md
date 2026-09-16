@@ -358,14 +358,15 @@ Citations document the SBOM's provenance and generation methodology:
 CYCLONEDX_ADD_CITATION = "1"  # default: enabled for 1.7
 ```
 
-This adds metadata tracking the source of the SBOM (meta-cyclonedx layer) and enables supply chain transparency.
+This adds a root-level `citations` array attributing the document to the yocto
+tooling recorded in `metadata.tools`, enabling supply chain transparency.
 
 #### Traffic Light Protocol (TLP) Marking
 
 For enterprise environments, you can mark SBOMs with TLP distribution restrictions:
 
 ```sh
-CYCLONEDX_TLP_MARKING = "GREEN"  # options: CLEAR, GREEN, AMBER, AMBER_STRICT, RED
+CYCLONEDX_TLP_MARKING = "GREEN"  # options: CLEAR, GREEN, AMBER, AMBER_AND_STRICT, RED
 ```
 
 TLP markings control how the SBOM can be shared:
@@ -373,7 +374,7 @@ TLP markings control how the SBOM can be shared:
 - `CLEAR`: Unlimited distribution
 - `GREEN`: Community-wide distribution
 - `AMBER`: Limited distribution to organizations
-- `AMBER_STRICT`: Limited distribution to specified recipients only
+- `AMBER_AND_STRICT`: Limited distribution to specified recipients only
 - `RED`: Personal for named recipients only
 
 Leave empty (default) to omit TLP marking.
@@ -490,7 +491,7 @@ CYCLONEDX_COMPONENT_PROPERTIES = ""
 # CycloneDX 1.7 optional features
 CYCLONEDX_ADD_LICENSE_DETAILS = "1"  # Include license text for custom licenses
 CYCLONEDX_ADD_CITATION = "1"         # Document SBOM provenance
-CYCLONEDX_TLP_MARKING = ""           # TLP marking (CLEAR|GREEN|AMBER|AMBER_STRICT|RED)
+CYCLONEDX_TLP_MARKING = ""           # TLP marking (CLEAR|GREEN|AMBER|AMBER_AND_STRICT|RED)
 
 # Space-separated list of recipes to always include with scope "required",
 # even if they do not produce rootfs packages (default: "").
