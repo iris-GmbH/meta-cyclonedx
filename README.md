@@ -90,6 +90,20 @@ version, CI build number, or git tag):
 CYCLONEDX_IMAGE_VERSION = "2026.07.0"
 ```
 
+### Image Component Type
+
+The type of the top-level image component in metadata is `firmware` by default.
+You can change this type to match the type of your image if needed:
+
+```sh
+CYCLONEDX_IMAGE_TYPE = "operating-system"
+```
+
+Possible values depend on the configured CycloneDX specification version.
+For a complete list see [CycloneDX 1.4](https://cyclonedx.org/docs/1.4/json/#metadata_component_type),
+[CycloneDX 1.6](https://cyclonedx.org/docs/1.6/json/#metadata_tools_oneOf_i0_components_items_type),
+[CycloneDX 1.7](https://cyclonedx.org/docs/1.7/json/#metadata_tools_oneOf_i0_components_items_type).
+
 ### Runtime vs Build-time Packages
 
 By default, meta-cyclonedx will only include run-time packages in the SBOM,
@@ -370,6 +384,10 @@ CYCLONEDX_SPEC_VERSION = "1.4"  # or "1.6"
 # Version for metadata.component in the generated SBOM
 # (default: "${DISTRO_VERSION}${IMAGE_VERSION_SUFFIX}")
 CYCLONEDX_IMAGE_VERSION = "${DISTRO_VERSION}${IMAGE_VERSION_SUFFIX}"
+
+# The top-level image component type.
+# Value must be a valid CycloneDX specified type (default: "firmware").
+CYCLONEDX_IMAGE_TYPE = "firmware"
 
 # Include build-time packages (default: "1" = runtime only)
 CYCLONEDX_RUNTIME_PACKAGES_ONLY = "1"
