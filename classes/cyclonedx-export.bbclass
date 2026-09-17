@@ -52,6 +52,9 @@ SRC_URI:pn-sbom-cve-check-update-cvelist-native = "git://github.com/CVEProject/c
 
 CYCLONEDX_RUNTIME_PACKAGES_ONLY ??= "1"
 
+# Type string for metadata.component in the CycloneDX SBOM.
+CYCLONEDX_IMAGE_TYPE ??= "firmware"
+
 # Version string for metadata.component in the CycloneDX SBOM.
 CYCLONEDX_IMAGE_VERSION ??= "${DISTRO_VERSION}${IMAGE_VERSION_SUFFIX}"
 
@@ -127,6 +130,39 @@ python () {
     spec_version = d.getVar("CYCLONEDX_SPEC_VERSION")
     if spec_version not in ["1.4", "1.6", "1.7"]:
         bb.fatal(f"Unsupported CYCLONEDX_SPEC_VERSION: {spec_version}. Supported versions: 1.4, 1.6, 1.7")
+
+    # Check for valid image type values
+    image_type = d.getVar("CYCLONEDX_IMAGE_TYPE")
+
+    # Image types supported by CycloneDX 1.4, 1.6, 1.7
+    supported_base_image_types = [
+        "application",
+        "framework",
+        "library",
+        "container",
+        "operating-system",
+        "device",
+        "firmware",
+        "file",
+    ]
+
+    if spec_version == "1.4":
+        supported_image_types = supported_base_image_types
+    else:
+        # CycloneDX 1.6 and 1.7 support additional types
+        supported_image_types = supported_base_image_types + [
+            "platform",
+            "device-driver",
+            "machine-learning-model",
+            "data",
+            "cryptographic-asset",
+        ]
+
+    if image_type not in supported_image_types:
+        bb.fatal(
+            f"Unsupported CYCLONEDX_IMAGE_TYPE value '{image_type}'. "
+            f"Valid types are: {', '.join(supported_image_types)}"
+        )
 
     if d.getVar("CYCLONEDX_INCLUDE_UNPATCHED_VULNS") == "1":
         bb.warn(f"meta-cyclonedx: Option CYCLONEDX_INCLUDE_UNPATCHED_VULNS has been removed post-Wrynose")
@@ -1064,6 +1100,7 @@ def export_cyclonedx(d):
 
     timestamp = datetime.now(timezone.utc).isoformat()
 
+    image_type = d.getVar("CYCLONEDX_IMAGE_TYPE") or "firmware"
     image_name = d.getVar("IMAGE_BASENAME") or d.getVar("PN") or "image"
     image_version = d.getVar("CYCLONEDX_IMAGE_VERSION") or "unknown"
     metadata_component_ref = str(uuid.uuid4())
@@ -1082,7 +1119,7 @@ def export_cyclonedx(d):
         "tools": create_tools_metadata(d)
     }
     sbom_metadata["component"] = {
-        "type": "firmware",
+        "type": image_type,
         "name": image_name,
         "version": image_version,
         "bom-ref": metadata_component_ref
