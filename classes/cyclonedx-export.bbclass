@@ -319,7 +319,7 @@ def list_buildtime_recipes(d):
 
 list_buildtime_recipes[vardepsexclude] += "BB_TASKDEPDATA"
 
-addtask do_populate_cyclonedx before do_build
+addtask do_populate_cyclonedx before do_build after do_package do_packagedata
 do_populate_cyclonedx[cleandirs] = "${CYCLONEDX_PNDATA_WORKDIR}"
 do_populate_cyclonedx[vardeps] += "CVE_STATUS"
 SSTATETASKS += "do_populate_cyclonedx"
