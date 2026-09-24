@@ -319,6 +319,19 @@ CYCLONEDX_COMPONENT_PROPERTIES = "custom:modified=true custom:team=platform"
 Entries missing an `=` are skipped with a warning rather than failing the
 build. The variable is empty (no properties added) by default.
 
+### Package URLs
+
+By default, each component gets a generic purl derived from `CVE_PRODUCT` and
+`CVE_VERSION`, e.g. `pkg:generic/vendor/product@1.0`.
+
+A recipe can declare its canonical purl instead by setting
+`SPDX_PACKAGE_URLS` (the same variable used by `create-spdx-3.0` in newer
+Yocto releases). If set, its first entry is used:
+
+```sh
+SPDX_PACKAGE_URLS = "pkg:github/example/my-app@1.2.3"
+```
+
 ### Minimal SBOM Configuration
 
 Meta-cyclonedx supports generating a **minimal SBOM** that includes only the essential information required by the CycloneDX specification. This is useful for:
