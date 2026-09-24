@@ -183,7 +183,7 @@ python do_populate_cyclonedx() {
     bom_ref_dedup_map = {}
 
     # append all defined package names for recipe to pn_list pkgs
-    for pkg in generate_packages_list(name, version):
+    for pkg in generate_packages_list(d, name, version):
         # Check if we already have a package with this CPE
         existing_pkg = next((c for c in pn_list["pkgs"] if c["cpe"] == pkg["cpe"]), None)
         if existing_pkg:
@@ -564,7 +564,7 @@ def resolve_dependency_refs(depends, recipe_refs, component_recipes, ref_recipes
 
     return list(recipe_refs[recipe])
 
-def generate_packages_list(products_names, version):
+def generate_packages_list(d, products_names, version):
     """
     Get a list of products and generate CPE and PURL identifiers for each of them.
     """
@@ -579,6 +579,11 @@ def generate_packages_list(products_names, version):
     if not version or version.strip() == "":
         version = "unknown"
 
+    # Recipes may declare their canonical purl(s) via SPDX_PACKAGE_URLS (same
+    # variable as used by create-spdx-3.0 in newer releases). Use the first entry
+    # if set, otherwise fall back to a generic purl.
+    spdx_purls = (d.getVar("SPDX_PACKAGE_URLS") or "").split()
+
     # some packages have alternative names, so we split CVE_PRODUCT
     # convert to set to avoid duplicates
     for product in set(products_names.split()):
@@ -589,12 +594,17 @@ def generate_packages_list(products_names, version):
         else:
             vendor = ""
 
+        if spdx_purls:
+            purl = spdx_purls[0]
+        else:
+            purl = 'pkg:generic/{}{}@{}'.format(f"{vendor}/" if vendor else '', product, version)
+
         pkg = {
             "name": product,
             "version": version,
             "type": "library",
             "cpe": 'cpe:2.3:*:{}:{}:{}:*:*:*:*:*:*:*'.format(vendor or "*", product, version),
-            "purl": 'pkg:generic/{}{}@{}'.format(f"{vendor}/" if vendor else '', product, version),
+            "purl": purl,
             "bom-ref": str(uuid.uuid4())
         }
         if vendor != "":
