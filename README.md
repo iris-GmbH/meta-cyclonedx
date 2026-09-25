@@ -98,6 +98,14 @@ version, CI build number, or git tag):
 CYCLONEDX_IMAGE_VERSION = "2026.07.0"
 ```
 
+### Image Component Name
+The name of the top-level image component in metadata is `${IMAGE_BASENAME}` by default.
+You can change the name if necessary:
+
+```sh
+CYCLONEDX_IMAGE_NAME = "Fancy Image"
+```
+
 ### Image Component Type
 
 The type of the top-level image component in metadata is `firmware` by default.
