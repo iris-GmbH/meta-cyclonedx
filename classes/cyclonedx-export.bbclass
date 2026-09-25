@@ -39,6 +39,9 @@ CYCLONEDX_UNPATCHED_VULNS_STATE ??= "in_triage"
 
 CYCLONEDX_RUNTIME_PACKAGES_ONLY ??= "1"
 
+# Name string for metadata.component in the CycloneDX SBOM.
+CYCLONEDX_IMAGE_NAME ??= "${IMAGE_BASENAME}"
+
 # Type string for metadata.component in the CycloneDX SBOM.
 CYCLONEDX_IMAGE_TYPE ??= "firmware"
 
@@ -917,7 +920,7 @@ def export_cyclonedx(d):
     timestamp = datetime.now(timezone.utc).isoformat()
 
     image_type = d.getVar("CYCLONEDX_IMAGE_TYPE") or "firmware"
-    image_name = d.getVar("IMAGE_BASENAME") or d.getVar("PN") or "image"
+    image_name = d.getVar("CYCLONEDX_IMAGE_NAME") or d.getVar("PN") or "image"
     image_version = d.getVar("CYCLONEDX_IMAGE_VERSION") or "unknown"
     metadata_component_ref = str(uuid.uuid4())
 
