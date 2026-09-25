@@ -1070,21 +1070,28 @@ def highest_priority_scope(*scopes):
     return min(known, key=priority.index)
 
 def resolve_extra_image_sbom_paths(d):
-    # Paths follow IMAGE_LINK_NAME convention; all images share CYCLONEDX_EXPORT_DIR = DEPLOY_DIR_IMAGE.
-    export_dir = d.getVar("CYCLONEDX_EXPORT_DIR")
-    machine = d.getVar("MACHINE")
+    # Re-expand the SBOM/VEX path templates with IMAGE_BASENAME set to the
+    # referenced image, so the path is produced by exactly the same expression
+    # that image used to write the file. Reconstructing the name by hand breaks
+    # on IMAGE_NAME_SUFFIX, which is per recipe (initramfs images set it empty).
     current_pn = d.getVar("PN")
+    raw_sbom = d.getVar("CYCLONEDX_EXPORT_SBOM", False)
+    raw_vex = d.getVar("CYCLONEDX_EXPORT_VEX", False)
     results = []
     for img_name in (d.getVar("CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES") or "").split():
         if img_name == current_pn:
             bb.warn(f"CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES: skipping self-reference '{img_name}'")
             continue
-        link_basename = f"{img_name}-{machine}"
-        results.append((
-            img_name,
-            os.path.join(export_dir, f"{link_basename}.cyclonedx.bom.json"),
-            os.path.join(export_dir, f"{link_basename}.cyclonedx.vex.json"),
-        ))
+        d2 = d.createCopy()
+        d2.setVar("IMAGE_BASENAME", img_name)
+        d2.setVar("PN", img_name)
+        sbom = d2.expand(raw_sbom)
+        vex = d2.expand(raw_vex)
+        if sbom == d.getVar("CYCLONEDX_EXPORT_SBOM"):
+            bb.error("CYCLONEDX_EXPORT_SBOM does not vary with IMAGE_BASENAME; "
+                     f"cannot locate the SBOM for '{img_name}'")
+            continue
+        results.append((img_name, sbom, vex))
     return results
 
 def export_cyclonedx(d):
