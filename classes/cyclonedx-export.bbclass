@@ -60,6 +60,10 @@ CYCLONEDX_IMAGE_TYPE ??= "firmware"
 # Version string for metadata.component in the CycloneDX SBOM.
 CYCLONEDX_IMAGE_VERSION ??= "${DISTRO_VERSION}${IMAGE_VERSION_SUFFIX}"
 
+# Add layer sources as external references to metadata.component in the
+# CycloneDX SBOM.
+CYCLONEDX_ADD_LAYER_REFERENCES ??= "1"
+
 # Space-separated list of recipe names to include in the SBOM regardless of
 # whether they produce rootfs packages. Use this for components that are
 # embedded directly into the image (e.g. OP-TEE inside a fitImage).
@@ -79,6 +83,10 @@ CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES ??= ""
 
 # Add component licenses (as specified within the recipe) to the SBOM
 CYCLONEDX_ADD_COMPONENT_LICENSES ??= "1"
+
+# Add component sources (as specified with SRC_URI within the recipe) as
+# external references to the SBOM.
+CYCLONEDX_ADD_COMPONENT_SOURCE_REFERENCES ??= "0"
 
 # Space-separated list of "name=value" pairs to attach to this recipe's
 # components as a CycloneDX properties array (e.g. downstream/vendor tagging
@@ -738,6 +746,105 @@ def resolve_dependency_refs(depends, recipe_refs, component_recipes, ref_recipes
 
     return list(recipe_refs[recipe])
 
+def generate_layer_references(d):
+    """
+    Get a list of externalReferences for the layers
+    """
+    import oe.buildcfg
+
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.7"
+
+    references = []
+    layers = oe.buildcfg.get_layer_revisions(d)
+    for (path, name, branch, rev, ismodified) in layers:
+        try:
+            repo_path = oe.buildcfg.get_metadata_git_toplevel(path)
+            remotes = oe.buildcfg.get_metadata_git_remotes(repo_path)
+            remote_url = oe.buildcfg.get_metadata_git_remote_url(repo_path, remotes[0])
+        except Exception:
+            continue
+
+        reference = {
+            "url": f"{remote_url}@{rev}{ismodified}",
+            "type": "distribution"
+        }
+        if spec_version == "1.7":
+            reference["properties"] = [
+                {
+                    "name": "yocto:layer:name",
+                    "value": name
+                },
+                {
+                    "name": "yocto:layer:remote_url",
+                    "value": remote_url
+                },
+                {
+                    "name": "yocto:layer:rev",
+                    "value": rev
+                },
+                {
+                    "name": "yocto:layer:is_modified",
+                    "value": bool(ismodified)
+                }
+            ]
+        references.append(reference)
+    return references
+
+def generate_source_references(d):
+    """
+    Get a list of externalReferences that has been generated from the SRC_URI
+    """
+    import bb.fetch2
+
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.7"
+
+    references = []
+    checksum_alg_map = {
+        "md5": "MD5",
+        "sha256": "SHA-256",
+        "sha1": "SHA-1",
+        "sha384": "SHA-384",
+        "sha512": "SHA-512"
+    }
+    fetcher = bb.fetch2.Fetch((d.getVar("SRC_URI") or "").split(), d)
+    for url in fetcher.urls:
+        url_data = fetcher.ud[url]
+        reference = {
+            "url": url,
+            "type": "distribution"
+        }
+        revision = getattr(url_data, "revision", None)
+        if revision:
+            reference["url"] += f"@{revision}"
+        for checksum_id in checksum_alg_map:
+            checksum = getattr(url_data, "%s_expected" % checksum_id, None)
+            if checksum:
+                reference.setdefault("hashes", [])
+                reference["hashes"].append({
+                    "alg": checksum_alg_map[checksum_id],
+                    "content": checksum
+                })
+        if spec_version == "1.7":
+            reference.setdefault("properties", [])
+            reference["properties"].append({
+                "name": "yocto:src_uri",
+                "value": url
+            })
+            parm = getattr(url_data, "parm", None)
+            if parm:
+                for key in parm:
+                    reference["properties"].append({
+                        "name": "yocto:src_uri:" + key,
+                        "value": parm[key]
+                    })
+            if revision:
+                reference["properties"].append({
+                    "name": "yocto:srcrev",
+                    "value": revision
+                })
+        references.append(reference)
+    return references
+
 def generate_packages_list(d, products_names, version):
     """
     Get a list of products and generate CPE and PURL identifiers for each of them.
@@ -753,6 +860,8 @@ def generate_packages_list(d, products_names, version):
     # Ensure version is never empty (required by some SBOM profiles)
     if not version or version.strip() == "":
         version = "unknown"
+
+    references = generate_source_references(d) if d.getVar("CYCLONEDX_ADD_COMPONENT_SOURCE_REFERENCES") == "1" else None
 
     # some packages have alternative names, so we split CVE_PRODUCT
     # convert to set to avoid duplicates
@@ -777,6 +886,8 @@ def generate_packages_list(d, products_names, version):
         }
         if vendor != "":
             pkg["group"] = vendor
+        if references:
+            pkg["externalReferences"] = references
         packages.append(pkg)
     return packages
 
@@ -1135,6 +1246,8 @@ def export_cyclonedx(d):
         "version": image_version,
         "bom-ref": metadata_component_ref
     }
+    if d.getVar("CYCLONEDX_ADD_LAYER_REFERENCES") == "1":
+        sbom_metadata["component"]["externalReferences"] = generate_layer_references(d)
 
     sbom = {
         "bomFormat": "CycloneDX",
