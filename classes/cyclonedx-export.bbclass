@@ -1462,7 +1462,10 @@ python do_export_cyclonedx() {
 # We use ROOTFS_POSTUNINSTALL_COMMAND to make sure this function runs exactly once
 # after the build process has been completed
 # see https://docs.yoctoproject.org/ref-manual/variables.html#term-ROOTFS_POSTUNINSTALL_COMMAND
-ROOTFS_POSTUNINSTALL_COMMAND =+ "do_export_cyclonedx; "
+ROOTFS_POSTUNINSTALL_COMMAND =+ "do_export_cyclonedx"
+# Looked up through a variable name argument, invisible to the signature
+export_cyclonedx[vardeps] += "CYCLONEDX_EXPORT_SBOM CYCLONEDX_EXPORT_VEX \
+    CYCLONEDX_EXPORT_SBOM_LINK CYCLONEDX_EXPORT_VEX_LINK"
 
 SSTATETASKS += "do_deploy_cyclonedx"
 do_deploy_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_TMP_EXPORT_DIR}"
