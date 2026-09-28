@@ -112,12 +112,16 @@ CYCLONEDX_EXPORT_DIR ??= "${DEPLOY_DIR_IMAGE}"
 CYCLONEDX_EXPORT_BASENAME ?= "${@d.getVar('IMAGE_NAME') or d.getVar('IMAGE_BASENAME') or d.getVar('PN')}.cyclonedx"
 CYCLONEDX_EXPORT_SBOM ??= "${CYCLONEDX_EXPORT_BASENAME}.bom.json"
 CYCLONEDX_EXPORT_VEX ??= "${CYCLONEDX_EXPORT_BASENAME}.vex.json"
+CYCLONEDX_EXPORT_SBOM_CVE_CHECK_VEX ??= "${CYCLONEDX_EXPORT_BASENAME}.sbom-cve-check.vex.json"
 # Create symlinks for image recipes similar to the image files by default
 IMAGE_LINK_NAME ??= ""
 CYCLONEDX_EXPORT_SBOM_LINK ??= "${@'${IMAGE_LINK_NAME}.cyclonedx.bom.json' if d.getVar('IMAGE_LINK_NAME') else ''}"
 CYCLONEDX_EXPORT_VEX_LINK ??= "${@'${IMAGE_LINK_NAME}.cyclonedx.vex.json' if d.getVar('IMAGE_LINK_NAME') else ''}"
 CYCLONEDX_PNDATA_WORKDIR = "${WORKDIR}/cyclonedx"
 CYCLONEDX_PNDATA = "${TMPDIR}/cyclonedx/pn"
+CYCLONEDX_IMAGEDATA_WORKDIR = "${WORKDIR}/cyclonedx-image"
+CYCLONEDX_IMAGEDATA = "${TMPDIR}/cyclonedx/image/${SSTATE_PKGARCH}/${PN}"
+CYCLONEDX_SBOM_CVE_CHECK_DEPLOYDIR = "${WORKDIR}/cyclonedx-sbom-cve-check"
 
 # We need to add the sbom serial number to the list of vulnerabilites for each recipe but
 # don't know it until after we generate the sbom export header file
@@ -166,9 +170,6 @@ python () {
             f"Unsupported CYCLONEDX_IMAGE_TYPE value '{image_type}'. "
             f"Valid types are: {', '.join(supported_image_types)}"
         )
-
-    if d.getVar("CYCLONEDX_INCLUDE_UNPATCHED_VULNS") == "1":
-        bb.warn(f"meta-cyclonedx: Option CYCLONEDX_INCLUDE_UNPATCHED_VULNS has been removed post-Wrynose")
 }
 
 python () {
@@ -1630,7 +1631,16 @@ def export_cyclonedx(d):
             target = Path(target).relative_to(os.path.dirname(link_name))
             os.symlink(target, link_name)
     make_deploy_symlink(export_sbom, get_cyclonedx_export_path("CYCLONEDX_EXPORT_SBOM_LINK"))
-    make_deploy_symlink(export_vex, get_cyclonedx_export_path("CYCLONEDX_EXPORT_VEX_LINK"))
+    if cyclonedx_sbom_cve_check_enabled(d):
+        imagedata_dir = d.getVar("CYCLONEDX_IMAGEDATA_WORKDIR")
+        if os.path.exists(imagedata_dir):
+            import shutil
+            shutil.rmtree(imagedata_dir)
+        bb.utils.mkdirhier(imagedata_dir)
+        write_json(os.path.join(imagedata_dir, "bom.json"), sbom)
+        write_json(os.path.join(imagedata_dir, "vex.json"), vex)
+    else:
+        make_deploy_symlink(export_vex, get_cyclonedx_export_path("CYCLONEDX_EXPORT_VEX_LINK"))
 
 python do_export_cyclonedx() {
     export_cyclonedx(d)
@@ -1665,8 +1675,126 @@ python do_deploy_cyclonedx() {
 python () {
     if bb.data.inherits_class("image", d):
         bb.build.addtask("do_deploy_cyclonedx", "do_image_complete", "do_rootfs", d)
+        if cyclonedx_sbom_cve_check_enabled(d):
+            d.appendVarFlag("do_deploy_cyclonedx", "sstate-inputdirs", " ${CYCLONEDX_IMAGEDATA_WORKDIR}")
+            d.appendVarFlag("do_deploy_cyclonedx", "sstate-outputdirs", " ${CYCLONEDX_IMAGEDATA}")
+            bb.build.addtask("do_cyclonedx_sbom_cve_check", "do_build", "do_sbom_cve_check do_deploy_cyclonedx", d)
+        elif d.getVar("CYCLONEDX_INCLUDE_UNPATCHED_VULNS") == "1":
+            bb.warn(f"meta-cyclonedx: CYCLONEDX_INCLUDE_UNPATCHED_VULNS needs the sbom-cve-check class for {d.getVar('PN')}")
         pn = d.getVar("PN")
         for img in (d.getVar("CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES") or "").split():
             if img != pn:
                 d.appendVarFlag("do_rootfs", "depends", f" {img}:do_deploy_cyclonedx")
 }
+
+def cyclonedx_sbom_cve_check_enabled(d):
+    return bb.data.inherits_class("image", d) and bb.data.inherits_class("sbom-cve-check", d)
+
+def cyclonedx_sbom_cve_check_analysis(d, issue):
+    status = issue.get("status")
+    detail = issue.get("detail", "")
+    kind = detail.split(":", 1)[0]
+
+    if status == "Patched":
+        analysis = {"state": "not_affected" if kind == "version-not-in-range" else "resolved"}
+    elif status == "Ignored":
+        analysis = {"state": "not_affected"}
+        if kind == "not-applicable-config":
+            analysis["justification"] = "code_not_present"
+    elif status == "Unpatched" and d.getVar("CYCLONEDX_INCLUDE_UNPATCHED_VULNS") == "1":
+        analysis = {}
+        if d.getVar("CYCLONEDX_UNPATCHED_VULNS_STATE"):
+            analysis["state"] = d.getVar("CYCLONEDX_UNPATCHED_VULNS_STATE")
+    else:
+        return None
+
+    analysis["detail"] = f"STATE: {detail}\n"
+    if issue.get("description"):
+        analysis["detail"] += f"JUSTIFICATION: {issue['description']}\n"
+    return analysis
+
+python do_cyclonedx_sbom_cve_check() {
+    from datetime import datetime, timezone
+
+    imagedata_dir = d.getVar("CYCLONEDX_IMAGEDATA")
+    sbom = read_json(os.path.join(imagedata_dir, "bom.json"))
+    vex = read_json(os.path.join(imagedata_dir, "vex.json"))
+
+    # Restored from sstate, the report keeps the IMAGE_NAME of an older build
+    report_ext = d.getVarFlag("SBOM_CVE_CHECK_EXPORT_CVECHECK", "ext")
+    image_link_name = d.getVar("IMAGE_LINK_NAME") or d.getVar("IMAGE_NAME")
+    report = read_json(os.path.join(d.getVar("DEPLOY_DIR_IMAGE"), image_link_name + report_ext))
+
+    ref_prefix = f"urn:cdx:{sbom['serialNumber'].split(':')[-1]}/{sbom.get('version', 1)}#"
+    refs_by_cpe = {}
+    refs_by_pn = {}
+    for component in sbom.get("components", []):
+        if component.get("cpe"):
+            refs_by_cpe.setdefault(component["cpe"], []).append(component["bom-ref"])
+        purl = component.get("purl", "")
+        if purl.startswith("pkg:yocto/"):
+            refs_by_pn.setdefault(purl.split("/")[-1].split("@")[0], []).append(component["bom-ref"])
+
+    covered = {(v["id"], a["ref"]) for v in vex.get("vulnerabilities", []) for a in v.get("affects", [])}
+
+    timestamp = None
+    if d.getVar("CYCLONEDX_SPEC_VERSION") in ["1.6", "1.7"] and d.getVar("CYCLONEDX_ADD_VULN_TIMESTAMPS") == "1":
+        timestamp = datetime.now(timezone.utc).isoformat()
+
+    statements = {}
+    for package in report.get("package", []):
+        refs = []
+        for cpe in package.get("cpes", []):
+            refs += refs_by_cpe.get(cpe, [])
+        if not refs:
+            refs = refs_by_pn.get(package["name"], [])
+        if not refs:
+            bb.debug(1, f"No SBOM component for sbom-cve-check results of {package['name']}")
+            continue
+
+        for issue in package.get("issue", []):
+            analysis = cyclonedx_sbom_cve_check_analysis(d, issue)
+            if analysis is None:
+                continue
+            affects = [ref_prefix + r for r in sorted(set(refs)) if (issue["id"], ref_prefix + r) not in covered]
+            if not affects:
+                continue
+            covered.update((issue["id"], a) for a in affects)
+            if timestamp:
+                analysis["firstIssued"] = timestamp
+                analysis["lastUpdated"] = timestamp
+            key = (issue["id"], analysis["detail"], analysis.get("state"))
+            statement = statements.setdefault(key, {
+                "id": issue["id"],
+                "source": {"name": "NVD", "url": f"https://nvd.nist.gov/vuln/detail/{issue['id']}"},
+                "analysis": analysis,
+                "affects": [],
+            })
+            statement["affects"] += [{"ref": a} for a in affects]
+
+    vex.setdefault("vulnerabilities", []).extend(statements[k] for k in sorted(statements))
+    bb.note(f"Added {len(statements)} sbom-cve-check statements to the CycloneDX VEX")
+
+    deploy_dir = d.getVar("CYCLONEDX_SBOM_CVE_CHECK_DEPLOYDIR")
+    export_vex = os.path.join(deploy_dir, d.getVar("CYCLONEDX_EXPORT_SBOM_CVE_CHECK_VEX"))
+    bb.utils.mkdirhier(os.path.dirname(export_vex))
+    write_json(export_vex, vex)
+
+    link = d.getVar("CYCLONEDX_EXPORT_VEX_LINK")
+    if link:
+        if os.path.isabs(link):
+            link = os.path.relpath(link, d.getVar("CYCLONEDX_EXPORT_DIR"))
+        link = os.path.join(deploy_dir, link)
+        bb.utils.mkdirhier(os.path.dirname(link))
+        os.symlink(os.path.relpath(export_vex, os.path.dirname(link)), link)
+}
+
+SSTATETASKS += "do_cyclonedx_sbom_cve_check"
+do_cyclonedx_sbom_cve_check[cleandirs] = "${CYCLONEDX_SBOM_CVE_CHECK_DEPLOYDIR}"
+do_cyclonedx_sbom_cve_check[sstate-inputdirs] = "${CYCLONEDX_SBOM_CVE_CHECK_DEPLOYDIR}"
+do_cyclonedx_sbom_cve_check[sstate-outputdirs] = "${CYCLONEDX_EXPORT_DIR}"
+do_cyclonedx_sbom_cve_check[vardeps] += "cyclonedx_sbom_cve_check_analysis"
+python do_cyclonedx_sbom_cve_check_setscene() {
+    sstate_setscene(d)
+}
+addtask do_cyclonedx_sbom_cve_check_setscene

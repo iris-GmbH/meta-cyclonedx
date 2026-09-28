@@ -52,8 +52,8 @@ BBLAYERS += "${BSPDIR}/sources/meta-cyclonedx"
 ## Configuration
 
 > **:warning: Breaking change when upgrading to Wrynose or later:**
-> Starting with Wrynose the `CYCLONEDX_INCLUDE_UNPATCHED_VULNS` option is not
-> available. For more details, see [this issue](https://github.com/iris-GmbH/meta-cyclonedx/issues/97)
+> Starting with Wrynose the `CYCLONEDX_INCLUDE_UNPATCHED_VULNS` option requires
+> the `sbom-cve-check` class, see [sbom-cve-check Results](#sbom-cve-check-results).
 
 To enable and configure the layer simply inherit the `cyclonedx-export` class
 in your `local.conf` file:
@@ -310,6 +310,39 @@ CYCLONEDX_VEX_ADD_KERNEL_CVE = "1"
 This is disabled by default (`"0"`) and only applies to whichever recipe
 provides `virtual/kernel`. No extra configuration is required: the CVE
 database it relies on is fetched automatically.
+
+### sbom-cve-check Results
+
+Since Wrynose, OE-core checks the image SPDX SBOM for CVEs with the
+`sbom-cve-check` class. For images inheriting it, meta-cyclonedx adds its
+results to the VEX, so the analysis done at build time (fixed versions, stable
+kernel backports, sources not compiled, `CVE_STATUS`, ...) reaches
+DependencyTrack instead of showing up there as open findings. It is enabled
+with the OE-core fragment:
+
+```sh
+bitbake-config-build enable-fragment core/yocto/sbom-cve-check
+```
+
+The fragment fetches the NVD and CVE List databases, several GB each, and
+updates them on every build unless their revisions are pinned.
+
+The results of each recipe are added to its components, matched by CPE, as
+follows. Statements the VEX already has for a CVE and component are kept.
+
+| sbom-cve-check status | VEX state |
+|---|---|
+| `Patched`, outside the affected versions | `not_affected` |
+| `Patched`, otherwise | `resolved` |
+| `Ignored` | `not_affected` (`code_not_present` for sources not compiled) |
+| `Unpatched` | only with `CYCLONEDX_INCLUDE_UNPATCHED_VULNS = "1"`, with `CYCLONEDX_UNPATCHED_VULNS_STATE` (default `in_triage`) |
+
+The merged VEX is written after `do_sbom_cve_check` to
+`CYCLONEDX_EXPORT_SBOM_CVE_CHECK_VEX` (default
+`${IMAGE_NAME}.cyclonedx.sbom-cve-check.vex.json`), and
+`CYCLONEDX_EXPORT_VEX_LINK` points at it. The report is read through the
+`${IMAGE_LINK_NAME}` link, and `SBOM_CVE_CHECK_EXPORT_CVECHECK` must stay in
+`SBOM_CVE_CHECK_EXPORT_VARS` (the default).
 
 ### Component Licenses
 
