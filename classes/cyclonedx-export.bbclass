@@ -1047,7 +1047,9 @@ def export_cyclonedx(d):
         pkgarchs.append("all")
 
     # first loop to fill the dictionary
-    for pkg in recipes:
+    # Iterate in a stable order: `recipes` is a set, and the loops below resolve
+    # collisions on a first-one-wins basis.
+    for pkg in sorted(recipes):
         for pkgarch in pkgarchs:
             pn_list_filepath = os.path.join(d.getVar("CYCLONEDX_PNDATA"),
                                             pkgarch, f"{pkg}.json")
@@ -1071,7 +1073,7 @@ def export_cyclonedx(d):
             component_recipes.setdefault(pn_pkg["name"], pkg)
             ref_recipes[pn_pkg["bom-ref"]] = pkg
 
-    for pkg in pn_lists:
+    for pkg in sorted(pn_lists):
         pn_list = copy.deepcopy(pn_lists[pkg])
 
         for pn_pkg in pn_list["pkgs"]:
@@ -1113,7 +1115,7 @@ def export_cyclonedx(d):
     if not (d.getVar("CYCLONEDX_EXPORT_DEPENDS") or "").split():
         runtime_edges = build_runtime_dependency_edges(d)
 
-    for pkg in pn_lists:
+    for pkg in sorted(pn_lists)::
         pn_list = copy.deepcopy(pn_lists[pkg])
 
         deps = pn_list.get("dependencies")
@@ -1183,7 +1185,7 @@ def export_cyclonedx(d):
     # recipe-name dependency remapping above apply to components derived from
     # Yocto packages and would corrupt an externally resolved tree.
     extra_seen_refs = {c["bom-ref"] for c in sbom["components"] if c.get("bom-ref")}
-    for pkg in recipes:
+    for pkg in sorted(recipes):
         pn_list = pn_lists.get(pkg)
         if not pn_list:
             continue
