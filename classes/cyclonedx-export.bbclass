@@ -1294,7 +1294,7 @@ def export_cyclonedx(d):
     if not (d.getVar("CYCLONEDX_EXPORT_DEPENDS") or "").split():
         runtime_edges = build_runtime_dependency_edges(d)
 
-    for pkg in sorted(pn_lists)::
+    for pkg in sorted(pn_lists):
         pn_list = copy.deepcopy(pn_lists[pkg])
 
         deps = pn_list.get("dependencies")
