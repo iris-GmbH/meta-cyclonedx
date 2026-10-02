@@ -247,19 +247,31 @@ All scope handling above is skipped when `CYCLONEDX_ADD_COMPONENT_SCOPES` is
 disabled.
 
 **Task ordering** is handled automatically. BitBake injects a
-`do_deploy_cyclonedx` dependency for each listed image into the parent's
-`do_rootfs`, so the included SBOM symlink is guaranteed to be on disk before
-the export runs.
+`do_cyclonedx_complete` dependency for each listed image into the parent's
+`do_rootfs`. This waits for the included image's CycloneDX deployment and,
+when that image inherits `sbom-cve-check`, its final CVE-enriched VEX.
 
-The SBOM is located by the standard `IMAGE_LINK_NAME` symlink convention:
+The documents are read from an internal, sstate-managed image-data store,
+not by reconstructing the included image's public filenames. Each image
+publishes its own documents and a manifest selecting the VEX to consume.
+The store is separated by multiconfig, package architecture and recipe.
+It is restored with the corresponding deployment tasks, so lookup also
+works when those tasks are restored from sstate.
+
+Public SBOM/VEX filenames and links retain the usual image naming convention.
+By default, image recipes publish these links:
 
 ```
-${CYCLONEDX_EXPORT_DIR}/{img_name}-{MACHINE}.cyclonedx.bom.json
+${CYCLONEDX_EXPORT_DIR}/${IMAGE_LINK_NAME}.cyclonedx.bom.json
+${CYCLONEDX_EXPORT_DIR}/${IMAGE_LINK_NAME}.cyclonedx.vex.json
 ```
 
-If the symlink does not exist (e.g. the image name is wrong or the included
-image was not built), a warning is emitted and the image is skipped without
-failing the build.
+The link paths can be customized with `CYCLONEDX_EXPORT_SBOM_LINK` and
+`CYCLONEDX_EXPORT_VEX_LINK`, or disabled by setting them to an empty string.
+Neither affects cross-image lookup. The included image can use a different
+`IMAGE_BASENAME`, `IMAGE_NAME_SUFFIX`, timestamp or export directory.
+If its internal image data is missing, a warning is emitted and the image
+is skipped without failing the export.
 
 ### Component Scopes
 
