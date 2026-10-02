@@ -113,10 +113,10 @@ CYCLONEDX_EXPORT_BASENAME ?= "${@d.getVar('IMAGE_NAME') or d.getVar('IMAGE_BASEN
 CYCLONEDX_EXPORT_SBOM ??= "${CYCLONEDX_EXPORT_BASENAME}.bom.json"
 CYCLONEDX_EXPORT_VEX ??= "${CYCLONEDX_EXPORT_BASENAME}.vex.json"
 CYCLONEDX_EXPORT_SBOM_CVE_CHECK_VEX ??= "${CYCLONEDX_EXPORT_BASENAME}.sbom-cve-check.vex.json"
-# Create symlinks for image recipes similar to the image files by default
-IMAGE_LINK_NAME ??= ""
-CYCLONEDX_EXPORT_SBOM_LINK ??= "${@'${IMAGE_LINK_NAME}.cyclonedx.bom.json' if d.getVar('IMAGE_LINK_NAME') else ''}"
-CYCLONEDX_EXPORT_VEX_LINK ??= "${@'${IMAGE_LINK_NAME}.cyclonedx.vex.json' if d.getVar('IMAGE_LINK_NAME') else ''}"
+# Stable links let one image consume another image's documents without knowing
+# how that image constructs IMAGE_LINK_NAME.
+CYCLONEDX_EXPORT_SBOM_LINK ??= "${CYCLONEDX_EXPORT_DIR}/${PN}-${MACHINE}.cyclonedx.bom.json"
+CYCLONEDX_EXPORT_VEX_LINK ??= "${CYCLONEDX_EXPORT_DIR}/${PN}-${MACHINE}.cyclonedx.vex.json"
 CYCLONEDX_PNDATA_WORKDIR = "${WORKDIR}/cyclonedx"
 CYCLONEDX_PNDATA = "${TMPDIR}/cyclonedx/pn"
 CYCLONEDX_IMAGEDATA_WORKDIR = "${WORKDIR}/cyclonedx-image"
@@ -1074,13 +1074,12 @@ def highest_priority_scope(*scopes):
     return min(known, key=priority.index)
 
 def resolve_extra_image_sbom_paths(d):
-    # Re-expand the SBOM/VEX path templates with IMAGE_BASENAME set to the
-    # referenced image, so the path is produced by exactly the same expression
-    # that image used to write the file. Reconstructing the name by hand breaks
-    # on IMAGE_NAME_SUFFIX, which is per recipe (initramfs images set it empty).
+    # Re-expand the stable link path templates with the referenced image's
+    # PN. Unlike IMAGE_LINK_NAME, these defaults do not depend on a recipe-
+    # specific IMAGE_NAME_SUFFIX.
     current_pn = d.getVar("PN")
-    raw_sbom = d.getVar("CYCLONEDX_EXPORT_SBOM", False)
-    raw_vex = d.getVar("CYCLONEDX_EXPORT_VEX", False)
+    raw_sbom = d.getVar("CYCLONEDX_EXPORT_SBOM_LINK", False)
+    raw_vex = d.getVar("CYCLONEDX_EXPORT_VEX_LINK", False)
     results = []
     for img_name in (d.getVar("CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES") or "").split():
         if img_name == current_pn:
@@ -1091,8 +1090,8 @@ def resolve_extra_image_sbom_paths(d):
         d2.setVar("PN", img_name)
         sbom = d2.expand(raw_sbom)
         vex = d2.expand(raw_vex)
-        if sbom == d.getVar("CYCLONEDX_EXPORT_SBOM"):
-            bb.error("CYCLONEDX_EXPORT_SBOM does not vary with IMAGE_BASENAME; "
+        if sbom == d.getVar("CYCLONEDX_EXPORT_SBOM_LINK"):
+            bb.error("CYCLONEDX_EXPORT_SBOM_LINK does not vary with PN; "
                      f"cannot locate the SBOM for '{img_name}'")
             continue
         results.append((img_name, sbom, vex))

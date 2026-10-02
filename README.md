@@ -251,15 +251,19 @@ disabled.
 `do_rootfs`, so the included SBOM symlink is guaranteed to be on disk before
 the export runs.
 
-The SBOM is located by the standard `IMAGE_LINK_NAME` symlink convention:
+The class publishes stable, recipe-based links for the SBOM and VEX. These are
+independent of `IMAGE_LINK_NAME`, so images with different
+`IMAGE_NAME_SUFFIX` values can be combined:
 
 ```
-${CYCLONEDX_EXPORT_DIR}/{img_name}-{MACHINE}.cyclonedx.bom.json
+${CYCLONEDX_EXPORT_DIR}/${PN}-${MACHINE}.cyclonedx.bom.json
+${CYCLONEDX_EXPORT_DIR}/${PN}-${MACHINE}.cyclonedx.vex.json
 ```
 
-If the symlink does not exist (e.g. the image name is wrong or the included
-image was not built), a warning is emitted and the image is skipped without
-failing the build.
+The link paths can be customized with `CYCLONEDX_EXPORT_SBOM_LINK` and
+`CYCLONEDX_EXPORT_VEX_LINK`. If the SBOM link does not exist (e.g. the image
+name is wrong or the included image was not built), a warning is emitted and
+the image is skipped without failing the build.
 
 ### Component Scopes
 
