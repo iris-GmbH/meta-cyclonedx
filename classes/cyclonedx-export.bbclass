@@ -113,15 +113,17 @@ CYCLONEDX_EXPORT_BASENAME ?= "${@d.getVar('IMAGE_NAME') or d.getVar('IMAGE_BASEN
 CYCLONEDX_EXPORT_SBOM ??= "${CYCLONEDX_EXPORT_BASENAME}.bom.json"
 CYCLONEDX_EXPORT_VEX ??= "${CYCLONEDX_EXPORT_BASENAME}.vex.json"
 CYCLONEDX_EXPORT_SBOM_CVE_CHECK_VEX ??= "${CYCLONEDX_EXPORT_BASENAME}.sbom-cve-check.vex.json"
-# Create symlinks for image recipes similar to the image files by default
+# Create symlinks for image recipes similar to the image files by default.
 IMAGE_LINK_NAME ??= ""
 CYCLONEDX_EXPORT_SBOM_LINK ??= "${@'${IMAGE_LINK_NAME}.cyclonedx.bom.json' if d.getVar('IMAGE_LINK_NAME') else ''}"
 CYCLONEDX_EXPORT_VEX_LINK ??= "${@'${IMAGE_LINK_NAME}.cyclonedx.vex.json' if d.getVar('IMAGE_LINK_NAME') else ''}"
 CYCLONEDX_PNDATA_WORKDIR = "${WORKDIR}/cyclonedx"
 CYCLONEDX_PNDATA = "${TMPDIR}/cyclonedx/pn"
 CYCLONEDX_IMAGEDATA_WORKDIR = "${WORKDIR}/cyclonedx-image"
-CYCLONEDX_IMAGEDATA = "${TMPDIR}/cyclonedx/image/${SSTATE_PKGARCH}/${PN}"
+# Multiconfigs may share TMPDIR while producing different variants of one image.
+CYCLONEDX_IMAGEDATA = "${TMPDIR}/cyclonedx/image/${BB_CURRENT_MC}"
 CYCLONEDX_SBOM_CVE_CHECK_DEPLOYDIR = "${WORKDIR}/cyclonedx-sbom-cve-check"
+CYCLONEDX_SBOM_CVE_CHECK_IMAGEDATA_WORKDIR = "${WORKDIR}/cyclonedx-sbom-cve-check-image"
 
 # We need to add the sbom serial number to the list of vulnerabilites for each recipe but
 # don't know it until after we generate the sbom export header file
@@ -1074,29 +1076,47 @@ def highest_priority_scope(*scopes):
     return min(known, key=priority.index)
 
 def resolve_extra_image_sbom_paths(d):
-    # Re-expand the SBOM/VEX path templates with IMAGE_BASENAME set to the
-    # referenced image, so the path is produced by exactly the same expression
-    # that image used to write the file. Reconstructing the name by hand breaks
-    # on IMAGE_NAME_SUFFIX, which is per recipe (initramfs images set it empty).
+    import os
+
+    # Read the producer's sstate-managed documents, not filenames reconstructed
+    # using this image's suffix, timestamp, export directory or link settings.
     current_pn = d.getVar("PN")
-    raw_sbom = d.getVar("CYCLONEDX_EXPORT_SBOM", False)
-    raw_vex = d.getVar("CYCLONEDX_EXPORT_VEX", False)
+    imagedata_root = d.getVar("CYCLONEDX_IMAGEDATA")
+    pkgarchs = list(reversed(d.getVar("SSTATE_ARCHS").split()))
     results = []
     for img_name in (d.getVar("CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES") or "").split():
         if img_name == current_pn:
             bb.warn(f"CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES: skipping self-reference '{img_name}'")
             continue
-        d2 = d.createCopy()
-        d2.setVar("IMAGE_BASENAME", img_name)
-        d2.setVar("PN", img_name)
-        sbom = d2.expand(raw_sbom)
-        vex = d2.expand(raw_vex)
-        if sbom == d.getVar("CYCLONEDX_EXPORT_SBOM"):
-            bb.error("CYCLONEDX_EXPORT_SBOM does not vary with IMAGE_BASENAME; "
-                     f"cannot locate the SBOM for '{img_name}'")
-            continue
-        results.append((img_name, sbom, vex))
+        for pkgarch in pkgarchs:
+            imagedata_dir = os.path.join(imagedata_root, pkgarch, img_name)
+            manifest_path = os.path.join(imagedata_dir, "manifest.json")
+            if os.path.exists(manifest_path):
+                manifest = read_json(manifest_path)
+                results.append((img_name,
+                                os.path.join(imagedata_dir, manifest["sbom"]),
+                                os.path.join(imagedata_dir, manifest["vex"])))
+                break
+        else:
+            bb.warn(f"CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES: image data not found for {img_name}")
     return results
+
+def write_cyclonedx_image_data(d, sbom, vex):
+    import os
+    import shutil
+
+    imagedata_dir = d.getVar("CYCLONEDX_IMAGEDATA_WORKDIR")
+    if os.path.exists(imagedata_dir):
+        shutil.rmtree(imagedata_dir)
+    bb.utils.mkdirhier(imagedata_dir)
+    write_json(os.path.join(imagedata_dir, "bom.json"), sbom)
+    write_json(os.path.join(imagedata_dir, "vex.json"), vex)
+    # The checked VEX has a separate sstate owner. The manifest selects it
+    # explicitly so disabling sbom-cve-check cannot pick up a stale result.
+    write_json(os.path.join(imagedata_dir, "manifest.json"), {
+        "sbom": "bom.json",
+        "vex": "sbom-cve-check/vex.json" if cyclonedx_sbom_cve_check_enabled(d) else "vex.json",
+    })
 
 def export_cyclonedx(d):
     """
@@ -1627,21 +1647,14 @@ def export_cyclonedx(d):
 
     write_json(export_sbom, sbom)
     write_json(export_vex, vex)
+    write_cyclonedx_image_data(d, sbom, vex)
 
     def make_deploy_symlink(target, link_name):
         if link_name and target != link_name:
             target = Path(target).relative_to(os.path.dirname(link_name))
             os.symlink(target, link_name)
     make_deploy_symlink(export_sbom, get_cyclonedx_export_path("CYCLONEDX_EXPORT_SBOM_LINK"))
-    if cyclonedx_sbom_cve_check_enabled(d):
-        imagedata_dir = d.getVar("CYCLONEDX_IMAGEDATA_WORKDIR")
-        if os.path.exists(imagedata_dir):
-            import shutil
-            shutil.rmtree(imagedata_dir)
-        bb.utils.mkdirhier(imagedata_dir)
-        write_json(os.path.join(imagedata_dir, "bom.json"), sbom)
-        write_json(os.path.join(imagedata_dir, "vex.json"), vex)
-    else:
+    if not cyclonedx_sbom_cve_check_enabled(d):
         make_deploy_symlink(export_vex, get_cyclonedx_export_path("CYCLONEDX_EXPORT_VEX_LINK"))
 
 python do_export_cyclonedx() {
@@ -1657,8 +1670,8 @@ export_cyclonedx[vardeps] += "CYCLONEDX_EXPORT_SBOM CYCLONEDX_EXPORT_VEX \
     CYCLONEDX_EXPORT_SBOM_LINK CYCLONEDX_EXPORT_VEX_LINK"
 
 SSTATETASKS += "do_deploy_cyclonedx"
-do_deploy_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_TMP_EXPORT_DIR}"
-do_deploy_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_EXPORT_DIR}"
+do_deploy_cyclonedx[sstate-inputdirs] = "${CYCLONEDX_TMP_EXPORT_DIR} ${CYCLONEDX_IMAGEDATA_WORKDIR}"
+do_deploy_cyclonedx[sstate-outputdirs] = "${CYCLONEDX_EXPORT_DIR} ${CYCLONEDX_IMAGEDATA}/${SSTATE_PKGARCH}/${PN}"
 do_deploy_cyclonedx[vardeps] += "CYCLONEDX_EXPORT_DIR"
 # Link names are stable (no timestamp) so they can safely invalidate sstate without churn.
 do_deploy_cyclonedx[vardeps] += "CYCLONEDX_EXPORT_SBOM_LINK"
@@ -1674,19 +1687,23 @@ python do_deploy_cyclonedx() {
     else:
        export_cyclonedx(d)
 }
+# Synchronize consumers with the final document producer, including its setscene
+# task. This task has no output of its own.
+do_cyclonedx_complete[noexec] = "1"
 python () {
     if bb.data.inherits_class("image", d):
         bb.build.addtask("do_deploy_cyclonedx", "do_image_complete", "do_rootfs", d)
+        complete_after = "do_deploy_cyclonedx"
         if cyclonedx_sbom_cve_check_enabled(d):
-            d.appendVarFlag("do_deploy_cyclonedx", "sstate-inputdirs", " ${CYCLONEDX_IMAGEDATA_WORKDIR}")
-            d.appendVarFlag("do_deploy_cyclonedx", "sstate-outputdirs", " ${CYCLONEDX_IMAGEDATA}")
+            complete_after = "do_cyclonedx_sbom_cve_check"
             bb.build.addtask("do_cyclonedx_sbom_cve_check", "do_build", "do_sbom_cve_check do_deploy_cyclonedx", d)
         elif d.getVar("CYCLONEDX_INCLUDE_UNPATCHED_VULNS") == "1":
             bb.warn(f"meta-cyclonedx: CYCLONEDX_INCLUDE_UNPATCHED_VULNS needs the sbom-cve-check class for {d.getVar('PN')}")
+        bb.build.addtask("do_cyclonedx_complete", "do_build", complete_after, d)
         pn = d.getVar("PN")
         for img in (d.getVar("CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES") or "").split():
             if img != pn:
-                d.appendVarFlag("do_rootfs", "depends", f" {img}:do_deploy_cyclonedx")
+                d.appendVarFlag("do_rootfs", "depends", f" {img}:do_cyclonedx_complete")
 }
 
 def cyclonedx_sbom_cve_check_enabled(d):
@@ -1718,7 +1735,7 @@ def cyclonedx_sbom_cve_check_analysis(d, issue):
 python do_cyclonedx_sbom_cve_check() {
     from datetime import datetime, timezone
 
-    imagedata_dir = d.getVar("CYCLONEDX_IMAGEDATA")
+    imagedata_dir = os.path.join(d.getVar("CYCLONEDX_IMAGEDATA"), d.getVar("SSTATE_PKGARCH"), d.getVar("PN"))
     sbom = read_json(os.path.join(imagedata_dir, "bom.json"))
     vex = read_json(os.path.join(imagedata_dir, "vex.json"))
 
@@ -1782,6 +1799,10 @@ python do_cyclonedx_sbom_cve_check() {
     bb.utils.mkdirhier(os.path.dirname(export_vex))
     write_json(export_vex, vex)
 
+    imagedata_dir = d.getVar("CYCLONEDX_SBOM_CVE_CHECK_IMAGEDATA_WORKDIR")
+    bb.utils.mkdirhier(imagedata_dir)
+    write_json(os.path.join(imagedata_dir, "vex.json"), vex)
+
     link = d.getVar("CYCLONEDX_EXPORT_VEX_LINK")
     if link:
         if os.path.isabs(link):
@@ -1792,9 +1813,9 @@ python do_cyclonedx_sbom_cve_check() {
 }
 
 SSTATETASKS += "do_cyclonedx_sbom_cve_check"
-do_cyclonedx_sbom_cve_check[cleandirs] = "${CYCLONEDX_SBOM_CVE_CHECK_DEPLOYDIR}"
-do_cyclonedx_sbom_cve_check[sstate-inputdirs] = "${CYCLONEDX_SBOM_CVE_CHECK_DEPLOYDIR}"
-do_cyclonedx_sbom_cve_check[sstate-outputdirs] = "${CYCLONEDX_EXPORT_DIR}"
+do_cyclonedx_sbom_cve_check[cleandirs] = "${CYCLONEDX_SBOM_CVE_CHECK_DEPLOYDIR} ${CYCLONEDX_SBOM_CVE_CHECK_IMAGEDATA_WORKDIR}"
+do_cyclonedx_sbom_cve_check[sstate-inputdirs] = "${CYCLONEDX_SBOM_CVE_CHECK_DEPLOYDIR} ${CYCLONEDX_SBOM_CVE_CHECK_IMAGEDATA_WORKDIR}"
+do_cyclonedx_sbom_cve_check[sstate-outputdirs] = "${CYCLONEDX_EXPORT_DIR} ${CYCLONEDX_IMAGEDATA}/${SSTATE_PKGARCH}/${PN}/sbom-cve-check"
 do_cyclonedx_sbom_cve_check[vardeps] += "cyclonedx_sbom_cve_check_analysis"
 python do_cyclonedx_sbom_cve_check_setscene() {
     sstate_setscene(d)
