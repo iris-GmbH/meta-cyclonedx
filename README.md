@@ -12,7 +12,7 @@ produces [CycloneDX](https://cyclonedx.org/) Software Bill of Materials
 
 This layer generates **CycloneDX** compliant SBOMs with the following features:
 
-- Currently, support for CycloneDX specification 1.7, 1.6, and 1.4
+- Currently, support for CycloneDX specification 1.6 and 1.7
 - Support for multiple supported Yocto (LTS) releases.
 - Improved package matching against the [NIST NVD](https://nvd.nist.gov/) by
   fixing [CPE](https://nvd.nist.gov/products/cpe) generation process.
@@ -64,21 +64,18 @@ INHERIT += "cyclonedx-export"
 
 ### CycloneDX Specification Version
 
-By default, meta-cyclonedx generates **CycloneDX 1.6** format SBOMs. You can configure a different version if needed:
+By default, meta-cyclonedx generates **CycloneDX 1.7** format SBOMs. You can configure a different version if needed:
 
 ```sh
-CYCLONEDX_SPEC_VERSION = "1.6"  # Default - modern format
-# Or for newer features:
-# CYCLONEDX_SPEC_VERSION = "1.7"
-# Or for legacy tools:
-# CYCLONEDX_SPEC_VERSION = "1.4"
+CYCLONEDX_SPEC_VERSION = "1.7"  # Default - latest format
+# Or for compatibility with older tools:
+# CYCLONEDX_SPEC_VERSION = "1.6"
 ```
 
 **Version differences:**
 
-- **1.4**: Legacy format for compatibility with older tools
-- **1.6**: Modern format with enhanced metadata and timestamps (default)
-- **1.7**: Latest version with advanced cryptography transparency (CBOM), intellectual property visibility, citations, and improved custom license handling
+- **1.6**: Modern format with enhanced metadata and timestamps
+- **1.7**: Latest version with advanced cryptography transparency (CBOM), intellectual property visibility, citations, and improved custom license handling (default)
 
 ### Image Component Version
 
@@ -99,6 +96,7 @@ CYCLONEDX_IMAGE_VERSION = "2026.07.0"
 ```
 
 ### Image Component Name
+
 The name of the top-level image component in metadata is `${IMAGE_BASENAME}` by default.
 You can change the name if necessary:
 
@@ -116,8 +114,7 @@ CYCLONEDX_IMAGE_TYPE = "operating-system"
 ```
 
 Possible values depend on the configured CycloneDX specification version.
-For a complete list see [CycloneDX 1.4](https://cyclonedx.org/docs/1.4/json/#metadata_component_type),
-[CycloneDX 1.6](https://cyclonedx.org/docs/1.6/json/#metadata_tools_oneOf_i0_components_items_type),
+For a complete list see [CycloneDX 1.6](https://cyclonedx.org/docs/1.6/json/#metadata_tools_oneOf_i0_components_items_type),
 [CycloneDX 1.7](https://cyclonedx.org/docs/1.7/json/#metadata_tools_oneOf_i0_components_items_type).
 
 ### Runtime vs Build-time Packages
@@ -288,7 +285,7 @@ This allows tools to filter components based on their use case:
 - **License compliance**: Include all components regardless of scope
 - **Supply chain tracking**: Include all components regardless of scope
 
-Component scopes are enabled by default and available in both CycloneDX 1.4 and 1.6
+Component scopes are enabled by default and available in both CycloneDX 1.6 and 1.7
 specifications. If you need to disable them (e.g., for compatibility with certain
 SBOM profiles or tools):
 
@@ -299,7 +296,7 @@ CYCLONEDX_ADD_COMPONENT_SCOPES = "0"
 ### Vulnerability Analysis Timestamps
 
 By default, vulnerability analysis records include `firstIssued` and `lastUpdated`
-timestamps when using CycloneDX 1.6. To generate minimal VEX documents without timestamps:
+timestamps in both CycloneDX 1.6 and 1.7. To generate minimal VEX documents without timestamps:
 
 ```sh
 CYCLONEDX_ADD_VULN_TIMESTAMPS = "0"
@@ -342,12 +339,12 @@ updates them on every build unless their revisions are pinned.
 The results of each recipe are added to its components, matched by CPE, as
 follows. Statements the VEX already has for a CVE and component are kept.
 
-| sbom-cve-check status | VEX state |
-|---|---|
-| `Patched`, outside the affected versions | `not_affected` |
-| `Patched`, otherwise | `resolved` |
-| `Ignored` | `not_affected` (`code_not_present` for sources not compiled) |
-| `Unpatched` | only with `CYCLONEDX_INCLUDE_UNPATCHED_VULNS = "1"`, with `CYCLONEDX_UNPATCHED_VULNS_STATE` (default `in_triage`) |
+| sbom-cve-check status                    | VEX state                                                                                                         |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `Patched`, outside the affected versions | `not_affected`                                                                                                    |
+| `Patched`, otherwise                     | `resolved`                                                                                                        |
+| `Ignored`                                | `not_affected` (`code_not_present` for sources not compiled)                                                      |
+| `Unpatched`                              | only with `CYCLONEDX_INCLUDE_UNPATCHED_VULNS = "1"`, with `CYCLONEDX_UNPATCHED_VULNS_STATE` (default `in_triage`) |
 
 The merged VEX is written after `do_sbom_cve_check` to
 `CYCLONEDX_EXPORT_SBOM_CVE_CHECK_VEX` (default
@@ -513,7 +510,7 @@ To generate a minimal SBOM, disable all optional features:
 INHERIT += "cyclonedx-export"
 
 # Use minimal configuration
-CYCLONEDX_SPEC_VERSION = "1.6"           # or "1.4"
+CYCLONEDX_SPEC_VERSION = "1.7"           # or "1.6"
 CYCLONEDX_RUNTIME_PACKAGES_ONLY = "1"    # Runtime packages only
 CYCLONEDX_ADD_COMPONENT_SCOPES = "0"     # Disable scope marking
 CYCLONEDX_ADD_VULN_TIMESTAMPS = "0"      # Disable VEX timestamps
@@ -525,8 +522,8 @@ This produces the smallest valid CycloneDX SBOM with only essential vulnerabilit
 ### Advanced Configuration Summary
 
 ```sh
-# Specification version (default: "1.6")
-CYCLONEDX_SPEC_VERSION = "1.6"  # or "1.7" or "1.4"
+# Specification version (default: "1.7")
+CYCLONEDX_SPEC_VERSION = "1.7"  # or "1.6"
 
 # Version for metadata.component in the generated SBOM
 # (default: "${DISTRO_VERSION}${IMAGE_VERSION_SUFFIX}")
@@ -621,6 +618,12 @@ While this layer does not offer a direct integration with DependencyTrack
 (we consider that a feature, since it removes dependencies to external
 infrastructure in your build),
 it is perfectly possible to use the produced SBOMs within DependencyTrack.
+
+DependencyTrack supports ingesting CycloneDX **1.7** documents only since
+version **5.1.0** ([release notes](https://dependencytrack.org/news/dependency-track-5-1)).
+If your DependencyTrack instance is older than that, set
+`CYCLONEDX_SPEC_VERSION = "1.6"` — older versions will reject the default
+1.7 output outright.
 
 At the time of writing DependencyTrack does not support uploading component
 and vulnerability information in one go (which is why we currently create a

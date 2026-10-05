@@ -14,22 +14,21 @@ CVE_VERSION ??= "${PV}"
 require conf/sbom-cve-check-config.inc
 
 # CycloneDX specification version to generate
-# Options: "1.4", "1.6", "1.7"
-# Version 1.4: Legacy format for compatibility with older tools
-# Version 1.6: Modern format with enhanced features (default)
-# Version 1.7: Latest version with advanced cryptography, IP transparency, and citations
-CYCLONEDX_SPEC_VERSION ??= "1.6"
+# Options: "1.6", "1.7"
+# Version 1.6: Modern format with enhanced features
+# Version 1.7: Latest version with advanced cryptography, IP transparency, and citations (default)
+CYCLONEDX_SPEC_VERSION ??= "1.7"
 
 # Component scope support
 # When enabled, components are marked as "required" (runtime) or "optional" (build-time)
 # Set to "0" to disable (e.g., for certain SBOM profiles or tool compatibility)
-# Available in both CycloneDX 1.4 and 1.6
+# Available in CycloneDX 1.6 and 1.7
 CYCLONEDX_ADD_COMPONENT_SCOPES ??= "1"
 
 # Vulnerability analysis timestamps
 # When enabled, adds firstIssued and lastUpdated timestamps to vulnerability analysis
 # Set to "0" to disable for minimal VEX documents
-# Available in CycloneDX 1.6
+# Available in CycloneDX 1.6 and 1.7
 CYCLONEDX_ADD_VULN_TIMESTAMPS ??= "1"
 
 # State to assign to unpatched vulnerabilities.
@@ -137,14 +136,14 @@ python () {
 
     # Validate CycloneDX specification version
     spec_version = d.getVar("CYCLONEDX_SPEC_VERSION")
-    if spec_version not in ["1.4", "1.6", "1.7"]:
-        bb.fatal(f"Unsupported CYCLONEDX_SPEC_VERSION: {spec_version}. Supported versions: 1.4, 1.6, 1.7")
+    if spec_version not in ["1.6", "1.7"]:
+        bb.fatal(f"Unsupported CYCLONEDX_SPEC_VERSION: {spec_version}. Supported versions: 1.6, 1.7")
 
     # Check for valid image type values
     image_type = d.getVar("CYCLONEDX_IMAGE_TYPE")
 
-    # Image types supported by CycloneDX 1.4, 1.6, 1.7
-    supported_base_image_types = [
+    # Image types supported by CycloneDX 1.6 and 1.7
+    supported_image_types = [
         "application",
         "framework",
         "library",
@@ -153,19 +152,12 @@ python () {
         "device",
         "firmware",
         "file",
+        "platform",
+        "device-driver",
+        "machine-learning-model",
+        "data",
+        "cryptographic-asset",
     ]
-
-    if spec_version == "1.4":
-        supported_image_types = supported_base_image_types
-    else:
-        # CycloneDX 1.6 and 1.7 support additional types
-        supported_image_types = supported_base_image_types + [
-            "platform",
-            "device-driver",
-            "machine-learning-model",
-            "data",
-            "cryptographic-asset",
-        ]
 
     if image_type not in supported_image_types:
         bb.fatal(
@@ -566,7 +558,7 @@ def resolve_license_data(d):
     for use in CycloneDX
     """
     # load spdx license identifiers for the appropriate CycloneDX spec version
-    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.7"
     layerdir = d.getVar("CYCLONEDX_LAYERDIR")
     pn = d.getVar("PN")
     licenses_file_path = f"{layerdir}/meta/files/spdx-license-list-data/licenses-{spec_version}.json"
@@ -583,8 +575,7 @@ def resolve_license_data(d):
     if "(" in licenses or ")" in licenses or " OR " in licenses or (split_expressions != "1" and " AND " in licenses):
         bb.debug(2, f"Adding {licenses} as expression.")
         entry = {"expression": licenses}
-        if spec_version != "1.4":
-            entry["acknowledgement"] = "declared"
+        entry["acknowledgement"] = "declared"
 
         # Add expressionDetails for CycloneDX 1.7 if enabled
         if spec_version == "1.7" and add_license_details == "1":
@@ -607,8 +598,7 @@ def resolve_license_data(d):
             bb.debug(2, f"Unknown license {raw_license}. Using raw name.")
             license_info.append({"license": {"name": raw_license}})
 
-        if spec_version != "1.4":
-            license_info[-1]["license"]["acknowledgement"] = "declared"
+        license_info[-1]["license"]["acknowledgement"] = "declared"
 
     return license_info
 
@@ -631,29 +621,20 @@ def get_custom_properties(d):
 
 def create_tools_metadata(d):
     """
-    Create tools metadata in the format appropriate for the CycloneDX spec version.
-
-    Version 1.4: Array format [{"name": "yocto"}]
-    Version 1.6+: Object format {"components": [{"type": "application", "name": "yocto", ...}]}
+    Create tools metadata in the CycloneDX 1.6+ object format:
+    {"components": [{"type": "application", "name": "yocto", ...}]}
     """
     import uuid
 
-    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
-
-    if spec_version == "1.4":
-        # Legacy array format
-        return [{"name": "yocto"}]
-    else:
-        # Modern object format (1.6+)
-        return {
-            "components": [
-                {
-                    "type": "application",
-                    "name": "yocto",
-                    "bom-ref": str(uuid.uuid4())
-                }
-            ]
-        }
+    return {
+        "components": [
+            {
+                "type": "application",
+                "name": "yocto",
+                "bom-ref": str(uuid.uuid4())
+            }
+        ]
+    }
 
 def create_citations(d, metadata):
     """
@@ -692,7 +673,7 @@ def add_document_extensions(d, doc):
     the TLP marking in metadata.distributionConstraints.
     Modifies the document dict in place.
     """
-    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.7"
 
     if spec_version != "1.7":
         return
@@ -867,11 +848,10 @@ def append_to_vex(d, cve, cves, bom_ref):
     if vex_state:
         analysis["state"] = vex_state
 
-    # Add timestamps for CycloneDX 1.6+ when enabled
+    # Add timestamps when enabled
     # This provides better tracking of when vulnerabilities were identified and updated
-    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
     add_timestamps = d.getVar('CYCLONEDX_ADD_VULN_TIMESTAMPS') == "1"
-    if spec_version in ["1.6", "1.7"] and add_timestamps:
+    if add_timestamps:
         timestamp = datetime.now(timezone.utc).isoformat()
         analysis["firstIssued"] = timestamp
         analysis["lastUpdated"] = timestamp
@@ -1141,7 +1121,7 @@ def export_cyclonedx(d):
     vex_serial_number = str(uuid.uuid4())
 
     # Get configured spec version
-    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.7"
 
     # Generate sbom document header
     bb.debug(2, f"Creating empty temporary sbom file with serial number {sbom_serial_number}")
@@ -1170,11 +1150,10 @@ def export_cyclonedx(d):
     # the whole document, as citations are not part of metadata.
     add_document_extensions(d, sbom)
 
-    # Only supported from CycloneDX 1.5.
-    if spec_version != "1.4":
-        sbom["metadata"]["lifecycles"] = [
-            {"phase": "build"}
-        ]
+    # Lifecycles are supported since CycloneDX 1.5.
+    sbom["metadata"]["lifecycles"] = [
+        {"phase": "build"}
+    ]
 
     # Generate vex document header
     bb.debug(2, f"Creating empty temporary vex file with serial number {sbom_serial_number}")
