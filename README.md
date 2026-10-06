@@ -123,6 +123,7 @@ The layers that have a git remote url are added to the `externalReferences` of
 the top-level image component in metadata by default. The `url` of the external
 reference is in the format `{remote_url}@{revision}{is_modified}`. If the layer
 has been modified, the `is_modified` in the url will be set to ` -- modified`.
+Layers for which no git remote url can be resolved are skipped.
 
 For CycloneDX SBOMs with version 1.7 the name, remote url, revision and whether
 it was modified are saved as `properties`. The property names for these are
@@ -413,6 +414,10 @@ The `url` of the external reference is the url from `SRC_URI`. If a revision is
 set for that source, `@{revision}` will be added to the external reference's
 `url` as well. Hashes that are set for a source will be included in the `hashes`
 property of the external reference.
+
+Local `file://` sources (e.g. patches) are not added as external references.
+References are collected without network access; sources whose revision can
+only be resolved by contacting the network (e.g. `AUTOREV`) are skipped.
 
 For CycloneDX SBOMs with version 1.7 the url, revision and options of the source
 are added as `properties`. The property names for these are `yocto:src_uri`,

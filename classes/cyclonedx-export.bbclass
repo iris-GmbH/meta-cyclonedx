@@ -760,8 +760,14 @@ def generate_layer_references(d):
         try:
             repo_path = oe.buildcfg.get_metadata_git_toplevel(path)
             remotes = oe.buildcfg.get_metadata_git_remotes(repo_path)
+            if not repo_path or not remotes:
+                continue
             remote_url = oe.buildcfg.get_metadata_git_remote_url(repo_path, remotes[0])
-        except Exception:
+        except (IndexError, OSError):
+            continue
+
+        # Only layers with a resolvable remote url get a reference.
+        if not remote_url:
             continue
 
         reference = {
@@ -784,7 +790,7 @@ def generate_layer_references(d):
                 },
                 {
                     "name": "yocto:layer:is_modified",
-                    "value": bool(ismodified)
+                    "value": "true" if ismodified else "false"
                 }
             ]
         references.append(reference)
@@ -806,43 +812,60 @@ def generate_source_references(d):
         "sha384": "SHA-384",
         "sha512": "SHA-512"
     }
-    fetcher = bb.fetch2.Fetch((d.getVar("SRC_URI") or "").split(), d)
-    for url in fetcher.urls:
-        url_data = fetcher.ud[url]
-        reference = {
-            "url": url,
-            "type": "distribution"
-        }
-        revision = getattr(url_data, "revision", None)
-        if revision:
-            reference["url"] += f"@{revision}"
-        for checksum_id in checksum_alg_map:
-            checksum = getattr(url_data, "%s_expected" % checksum_id, None)
-            if checksum:
-                reference.setdefault("hashes", [])
-                reference["hashes"].append({
-                    "alg": checksum_alg_map[checksum_id],
-                    "content": checksum
-                })
-        if spec_version == "1.7":
-            reference.setdefault("properties", [])
-            reference["properties"].append({
-                "name": "yocto:src_uri",
-                "value": url
-            })
-            parm = getattr(url_data, "parm", None)
-            if parm:
-                for key in parm:
-                    reference["properties"].append({
-                        "name": "yocto:src_uri:" + key,
-                        "value": parm[key]
-                    })
+    # Building the fetcher data resolves revisions (e.g. AUTOREV or branch
+    # names for git urls). Keep this offline so SBOM generation never touches
+    # the network, and skip urls that cannot be resolved without it.
+    no_network = d.getVar("BB_NO_NETWORK")
+    d.setVar("BB_NO_NETWORK", "1")
+    try:
+        for url in (d.getVar("SRC_URI") or "").split():
+            try:
+                url_data = bb.fetch2.Fetch([url], d).ud[url]
+            except bb.fetch2.NetworkAccess:
+                bb.warn("cyclonedx-export: cannot resolve a SRC_URI entry without network access, skipping")
+                continue
+            if url_data.type == "file":
+                # Local sources (patches, vendored files) are not distribution references.
+                continue
+            reference = {
+                "url": url,
+                "type": "distribution"
+            }
+            revision = getattr(url_data, "revision", None)
             if revision:
+                reference["url"] += f"@{revision}"
+            for checksum_id in checksum_alg_map:
+                checksum = getattr(url_data, "%s_expected" % checksum_id, None)
+                if checksum:
+                    reference.setdefault("hashes", [])
+                    reference["hashes"].append({
+                        "alg": checksum_alg_map[checksum_id],
+                        "content": checksum
+                    })
+            if spec_version == "1.7":
+                reference.setdefault("properties", [])
                 reference["properties"].append({
-                    "name": "yocto:srcrev",
-                    "value": revision
+                    "name": "yocto:src_uri",
+                    "value": url
                 })
-        references.append(reference)
+                parm = getattr(url_data, "parm", None)
+                if parm:
+                    for key in parm:
+                        reference["properties"].append({
+                            "name": "yocto:src_uri:" + key,
+                            "value": parm[key]
+                        })
+                if revision:
+                    reference["properties"].append({
+                        "name": "yocto:srcrev",
+                        "value": revision
+                    })
+            references.append(reference)
+    finally:
+        if no_network is None:
+            d.delVar("BB_NO_NETWORK")
+        else:
+            d.setVar("BB_NO_NETWORK", no_network)
     return references
 
 def generate_packages_list(d, products_names, version):
