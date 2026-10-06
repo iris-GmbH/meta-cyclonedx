@@ -117,6 +117,25 @@ Possible values depend on the configured CycloneDX specification version.
 For a complete list see [CycloneDX 1.6](https://cyclonedx.org/docs/1.6/json/#metadata_tools_oneOf_i0_components_items_type),
 [CycloneDX 1.7](https://cyclonedx.org/docs/1.7/json/#metadata_tools_oneOf_i0_components_items_type).
 
+### Image Layer References
+
+The layers that have a git remote url are added to the `externalReferences` of
+the top-level image component in metadata by default. The `url` of the external
+reference is in the format `{remote_url}@{revision}{is_modified}`. If the layer
+has been modified, the `is_modified` in the url will be set to ` -- modified`.
+Layers for which no git remote url can be resolved are skipped.
+
+For CycloneDX SBOMs with version 1.7 the name, remote url, revision and whether
+it was modified are saved as `properties`. The property names for these are
+`yocto:layer:name`, `yocto:layer:remote_url`, `yocto:layer:rev` and
+`yocto:layer:is_modified` respectively.
+
+You may disable this by setting:
+
+```sh
+CYCLONEDX_ADD_LAYER_REFERENCES = "0"
+```
+
 ### Runtime vs Build-time Packages
 
 By default, meta-cyclonedx will only include run-time packages in the SBOM,
@@ -381,6 +400,28 @@ To disable this feature you can set
 ```sh
 CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS = "0"
 ```
+
+### Component Source References
+
+By default, `externalReferences` using the `SRC_URI` aren't added to the
+components. This can be enabled by setting:
+
+```sh
+CYCLONEDX_ADD_COMPONENT_SOURCE_REFERENCES = "1"
+```
+
+The `url` of the external reference is the url from `SRC_URI`. If a revision is
+set for that source, `@{revision}` will be added to the external reference's
+`url` as well. Hashes that are set for a source will be included in the `hashes`
+property of the external reference.
+
+Local `file://` sources (e.g. patches) are not added as external references.
+References are collected without network access; sources whose revision can
+only be resolved by contacting the network (e.g. `AUTOREV`) are skipped.
+
+For CycloneDX SBOMs with version 1.7 the url, revision and options of the source
+are added as `properties`. The property names for these are `yocto:src_uri`,
+`yocto:srcrev` and `yocto:src_uri:{option}` respectively.
 
 ### Component Properties
 
