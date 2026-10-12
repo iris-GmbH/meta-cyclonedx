@@ -120,6 +120,28 @@ For a complete list see [CycloneDX 1.4](https://cyclonedx.org/docs/1.4/json/#met
 [CycloneDX 1.6](https://cyclonedx.org/docs/1.6/json/#metadata_tools_oneOf_i0_components_items_type),
 [CycloneDX 1.7](https://cyclonedx.org/docs/1.7/json/#metadata_tools_oneOf_i0_components_items_type).
 
+### Yocto Metadata Layer References
+
+The layers that have a git remote url are added to the `externalReferences` of
+the top-level image component in metadata by default. The `url` of the external
+reference is in the format `{remote_url}@{revision}{is_modified}`. If the layer
+has been modified, the `is_modified` in the url will be set to ` -- modified`.
+Layers for which no git remote url can be resolved are skipped with a warning.
+Credentials embedded in a resolved remote url are stripped from the reference
+and its properties. Layer references use the CycloneDX `vcs` external reference
+type.
+
+For CycloneDX SBOMs with version 1.7 the name, remote url, revision and whether
+it was modified are saved as `properties`. The property names for these are
+`yocto:layer:name`, `yocto:layer:remote_url`, `yocto:layer:rev` and
+`yocto:layer:is_modified` respectively.
+
+You may disable this by setting:
+
+```sh
+CYCLONEDX_ADD_LAYER_REFERENCES = "0"
+```
+
 ### Runtime vs Build-time Packages
 
 By default, meta-cyclonedx will only include run-time packages in the SBOM,
@@ -384,6 +406,54 @@ To disable this feature you can set
 ```sh
 CYCLONEDX_SPLIT_LICENSE_EXPRESSIONS = "0"
 ```
+
+### Component Source and Build Input References
+
+By default, `externalReferences` using `SRC_URI` aren't added to components.
+This can be enabled by setting:
+
+```sh
+CYCLONEDX_ADD_COMPONENT_SOURCE_REFERENCES = "1"
+```
+
+The generated references describe both component source locations and direct
+local build inputs. Version-control fetchers use the CycloneDX `vcs` external
+reference type; other remote fetchers use `distribution`.
+
+For remote sources, the `url` of the external reference is the URL from
+`SRC_URI`. If a revision is set for that source, `@{revision}` will be added to
+the external reference's `url` as well. Hashes set for a remote source are
+included in the `hashes` property.
+
+A `SRC_URI` entry that embeds credentials, e.g.
+`https://user:token@git.internal/repo.git`, is published without them: the
+reference `url` and the `yocto:src_uri` property use the credential-free URL,
+which stays usable with the consumer's own credentials. The build log notes
+the stripping and masks the credentials.
+
+Direct `file://` entries that resolve inside a configured Yocto metadata layer
+are included as `other` references. Their URL has the form
+`file:{layer}/{layer-relative-path}`, and regular files include a computed
+SHA-512 hash. The reference comment identifies the owning layer. Entries that
+cannot be resolved or attributed to a configured layer are skipped with a
+warning.
+Absolute local paths are normalized to the layer-relative URL so build-host
+paths are not exposed.
+
+Local VCS repositories are not added because they do not provide portable
+component source locations. Fetchers whose effective transport is `file`, such
+as `git://` or `gitsm://` with `protocol=file` or without a hostname, are
+skipped with a warning. References are collected without network access;
+sources whose revision can only be resolved by contacting the network (e.g.
+`AUTOREV`) are skipped with a warning. Every warning identifies the affected
+`SRC_URI` entry, with credentials masked.
+
+For CycloneDX SBOMs with version 1.7, the URL, revision and options of a source
+are added as properties named `yocto:src_uri`, `yocto:srcrev` and
+`yocto:src_uri:{option}` respectively. Local file references also include
+`yocto:layer:name` and `yocto:layer:path`. When present, the corresponding
+top-level Yocto metadata layer reference supplies its remote URL, revision and
+modification state.
 
 ### Component Properties
 
