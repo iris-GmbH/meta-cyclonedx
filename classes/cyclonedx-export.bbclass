@@ -574,7 +574,7 @@ def resolve_license_data(d):
     for use in CycloneDX
     """
     # load spdx license identifiers for the appropriate CycloneDX spec version
-    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION')
     layerdir = d.getVar("CYCLONEDX_LAYERDIR")
     pn = d.getVar("PN")
     licenses_file_path = f"{layerdir}/meta/files/spdx-license-list-data/licenses-{spec_version}.json"
@@ -646,7 +646,7 @@ def create_tools_metadata(d):
     """
     import uuid
 
-    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION')
 
     if spec_version == "1.4":
         # Legacy array format
@@ -700,7 +700,7 @@ def add_document_extensions(d, doc):
     the TLP marking in metadata.distributionConstraints.
     Modifies the document dict in place.
     """
-    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION')
 
     if spec_version != "1.7":
         return
@@ -800,7 +800,7 @@ def generate_layer_references(d):
     """
     import oe.buildcfg
 
-    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.7"
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION')
 
     references = []
     layers = oe.buildcfg.get_layer_revisions(d)
@@ -895,7 +895,7 @@ def generate_source_references(d):
     import bb.fetch2
     import bb.utils
 
-    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.7"
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION')
 
     references = []
     checksum_alg_map = {
@@ -1135,7 +1135,7 @@ def append_to_vex(d, cve, cves, bom_ref):
 
     # Add timestamps for CycloneDX 1.6+ when enabled
     # This provides better tracking of when vulnerabilities were identified and updated
-    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION')
     add_timestamps = d.getVar('CYCLONEDX_ADD_VULN_TIMESTAMPS') == "1"
     if spec_version in ["1.6", "1.7"] and add_timestamps:
         timestamp = datetime.now(timezone.utc).isoformat()
@@ -1407,7 +1407,7 @@ def export_cyclonedx(d):
     vex_serial_number = str(uuid.uuid4())
 
     # Get configured spec version
-    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION') or "1.6"
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION')
 
     # Generate sbom document header
     bb.debug(2, f"Creating empty temporary sbom file with serial number {sbom_serial_number}")
