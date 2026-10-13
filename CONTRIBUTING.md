@@ -37,6 +37,13 @@ If you are porting a change from `main` to a release branch:
 - check for hidden dependencies on newer OpenEmbedded or Yocto features
 - compare outputs to ensure the result stays predictable
 
+## Testing
+
+The default test suite is unit-only: fast and dependency-free, it must pass
+for every change. The kas acceptance build suite is a maintainer workflow,
+documented in [docs/testing.md](docs/testing.md); running it is not expected
+of external contributors.
+
 ## Commit messages
 
 Write clear commit messages that explain:
