@@ -1,0 +1,136 @@
+# SPDX-License-Identifier: MIT
+
+# kas project configuration for the meta-cyclonedx acceptance harness.
+#
+# Composes the split upstream repositories (poky-less layout): standalone
+# BitBake, OE-Core (its `meta` layer) and the meta-yocto repository's
+# `meta-poky` distro layer. The layer under test participates as a URL-less
+# local repository entry, i.e. the working tree itself is used in place,
+# mounted read-only during builds and never cloned or reset.
+#
+# Release coordinates: the `branch:` values below must name the upstream
+# release branch matching this branch's release series (see LAYERSERIES_COMPAT
+# in conf/layer.conf). Backport variants of this file must differ *only* in
+# these coordinates (on pre-split LTS branches the layout may reference the
+# combined poky repository instead).
+#
+# Run via the container wrapper (the kas tool is pinned as a tag-pinned
+# submodule under tools/kas; see docs/testing.md):
+#
+#   pytest -m integration
+
+header:
+  version: 19
+
+machine: qemux86-64
+distro: poky
+target: core-image-minimal
+
+# Forwarding hooks: the integration fixture sets the cache locations via
+# the environment. A non-empty SSTATE_MIRRORS overrides the default below;
+# the wrapper only forwards it when set and non-empty, so to run without
+# shared state point it at an inert location (see docs/testing.md).
+# CORE_IMAGE_EXTRA_INSTALL carries the image-change run (R5): while set,
+# its content joins the image's install list — a tracked-tree-free way to
+# change exactly one thing in the rootfs. Unset for every other run, so
+# no other run's signatures move. Only variables already present in the
+# container environment arrive here: the harness sets this one with the
+# wrapper's --runtime-args channel, not a host export.
+env:
+  DL_DIR:
+  SSTATE_DIR:
+  SSTATE_MIRRORS:
+  CORE_IMAGE_EXTRA_INSTALL:
+
+# Release coordinates: the `branch:` entries name the series and the
+# `commit:` pins make runs reproducible; refresh both together when
+# rebasing the harness (see docs/testing.md). Keep the constants in
+# tests/integration/kas_env.py in sync, which assert over deployed output.
+repos:
+  # Standalone BitBake; engine only, contributes no layers.
+  bitbake:
+    url: https://github.com/openembedded/bitbake.git
+    branch: master
+    commit: 37b9c56ae3b2294ad170859a638c879910c82c59
+    path: .integration/repos/bitbake
+    layers: {}
+
+  # OE-Core; only its core `meta` layer.
+  oe-core:
+    url: https://github.com/openembedded/openembedded-core.git
+    branch: master
+    commit: aba08734931428eb3c853bb497d8e21127ad746e
+    path: .integration/repos/oe-core
+    layers:
+      meta:
+
+  # The meta-yocto distro layer providing DISTRO=poky.
+  meta-yocto:
+    url: https://github.com/yoctoproject/meta-yocto.git
+    branch: master
+    commit: 49a2b44583968d321b3195bfd0cb2232dff13950
+    path: .integration/repos/meta-yocto
+    layers:
+      meta-poky:
+
+  # The layer under test: this repository's working tree, URL-less so kas
+  # performs no version-control operations on it. Its root *is* the layer.
+  meta-cyclonedx:
+
+  # Acceptance fixture layer (graph-isolation run, R4): a URL-less repo the
+  # fixture initializes under the integration workspace. Listed in every
+  # run — its tracked tree is just an empty, inert layer — so the R4 delta
+  # is exactly one added recipe. The run adds it untracked; teardown
+  # removes the repository again (every invocation re-ensures it).
+  # A manual `kas build kas.yml` therefore needs `.integration/fixtures`
+  # to exist; any `pytest -m integration` run creates it automatically.
+  fixtures:
+    path: .integration/fixtures
+    layers:
+      meta-integration-fixtures:
+
+local_conf_header:
+  meta-cyclonedx: |
+    INHERIT += "cyclonedx-export"
+
+    # Layer defaults exercised by the harness:
+    # - recipe-name image documents: deploy the SBOM/VEX as
+    #   <image-recipe-name>.cyclonedx.{bom,vex}.json (no datetime suffix),
+    #   so re-runs address the very same paths.
+    CYCLONEDX_EXPORT_BASENAME = "${IMAGE_BASENAME}.cyclonedx"
+    # - no CVE scanning: neither cve-check nor OE-core's sbom-cve-check
+    #   fragment (which would fetch the multi-GB CVE/NVD databases).
+    INHERIT:remove = "cve-check sbom-cve-check"
+    # - no export dependencies: CYCLONEDX_EXPORT_DEPENDS stays at its
+    #   default (empty); only the image rootfs is exported.
+
+    # Accelerate cold runs from the Yocto Project's published autobuilder
+    # sstate cache; reuse is hash-addressed, so misses just build locally.
+    # A non-empty SSTATE_MIRRORS in the environment overrides this (see
+    # `env` above); disable by pointing it at an inert location.
+    SSTATE_MIRRORS ?= "file://.* http://sstate.yoctoproject.org/all/PATH;downloadfilename=PATH"
+
+    # Cap disk usage of the shared repo-local workspace.
+    INHERIT += "rm_work"
+
+    # The `opengl`/`vulkan` DISTRO_FEATUREs flow into native builds
+    # (see DISTRO_FEATURES_FILTER_NATIVE), enabling qemu-native's GL
+    # support and mesa-native's vulkan tooling (spirv-llvm-translator,
+    # clang),pulling in the llvm-native dependency. core-image-minimal uses
+    # neither feature (no graphics at all), so dropping them changes
+    # neither the rootfs nor the SBOM content; it only removes runqemu
+    # GL support the harness never uses.
+    DISTRO_FEATURES:remove = "opengl vulkan"
+
+    # qemuboot.bbclass adds two runqemu-only image dependencies: the
+    # system emulator itself and qemu-helper-native, which DEPENDS on
+    # qemu-system-native (its recipe-sysroot builds the whole emulator).
+    # The harness never boots the image, so drop both tokens — removing
+    # only the first leaves the chain alive via the helper.
+    EXTRA_IMAGEDEPENDS:remove = "qemu-system-native qemu-helper-native:do_addto_recipe_sysroot"
+
+    # Defensive: llvm-native (if it returns to the graph) peaks over
+    # 1 GB per parallel build step; four in parallel OOM-kill ninja
+    # (exit 137) on an 8 GB box. Per-recipe overrides ride the
+    # `pn-${PN}` token in OVERRIDES.
+    PARALLEL_MAKE:pn-llvm = "-j 2"
