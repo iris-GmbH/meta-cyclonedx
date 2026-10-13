@@ -117,6 +117,43 @@ Possible values depend on the configured CycloneDX specification version.
 For a complete list see [CycloneDX 1.6](https://cyclonedx.org/docs/1.6/json/#metadata_tools_oneOf_i0_components_items_type),
 [CycloneDX 1.7](https://cyclonedx.org/docs/1.7/json/#metadata_tools_oneOf_i0_components_items_type).
 
+### Image Component CPE and PURL
+
+By default, a CPE and PURL are not included in the top-level image component in
+metadata. This can be enabled by setting:
+
+```sh
+CYCLONEDX_IMAGE_ADD_CPE_AND_PURL = "1"
+```
+
+The part of the CPE is automatically set depending on the type of the image
+component (`CYCLONEDX_IMAGE_TYPE`). The CPE part will be set to `o` for the
+`firmware` and `operating-system` type, `a` for `application`, `h` for `device` and `*` for any
+other type.
+
+The vendor used in the CPE can be set with:
+
+```sh
+CYCLONEDX_IMAGE_VENDOR = "vendor"
+```
+
+The product and version of the CPE are the same as the name and version of the
+image component (see `CYCLONEDX_IMAGE_NAME` and `CYCLONEDX_IMAGE_VERSION`).
+
+You may also completely replace the default generated CPE 2.3 by setting:
+
+```sh
+CYCLONEDX_IMAGE_CPE = "cpe:2.3:o:linux:linux_kernel:6.18.56:*:*:*:*:*:*:*"
+```
+
+The PURL for the image will be generated with the `BPN` and `PV` of the image
+recipe and will also include the layername if available.
+Additionally, the layer revision and remote url will be included as qualifiers
+if they can be resolved for the layer.
+Credentials embedded in the resolved remote url are stripped.
+See the [Yocto Definition in the PURL Specification](https://github.com/package-url/purl-spec/blob/ebbeb6fd2f391cd786e6ce075c9cb78ef3ca4bf5/types/yocto-definition.json#L46)
+for reference.
+
 ### Yocto Metadata Layer References
 
 The layers that have a git remote url are added to the `externalReferences` of
