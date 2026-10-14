@@ -21,13 +21,11 @@ from __future__ import annotations
 
 import re
 
-#: UUIDv4-shaped strings — CycloneDX serial numbers and bom-refs. Masked
-#: *uniformly*, so cross-references (a VEX urn:cdx pointer naming the
-#: SBOM's serial and a component's bom-ref) keep comparing equal.
+#: UUID-shaped identifiers. Only declared serial numbers and bom-refs are
+#: normalized; unknown references remain visible to the comparison.
 UUID = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
-UUID_PLACEHOLDER = "<uuid>"
 
 #: Field names carrying generation-time timestamps (metadata.statement
 #: timestamps, citation/tool timestamps).
@@ -72,31 +70,56 @@ def _is_layer_reference(item):
 
 
 def canonicalize(value):
-    """A copy of *value* with the per-generation volatiles normalized."""
-    if isinstance(value, dict):
-        layer = _is_layer_reference(value)
-        result = {
-            key: canonicalize(item)
-            for key, item in value.items()
-            if key not in TIMESTAMP_KEYS
-        }
-        if layer and isinstance(result.get("url"), str):
-            result["url"] = LAYER_GIT_URL.sub("", result["url"])
-        return result
-    if isinstance(value, list):
-        return [
-            canonicalize(item)
-            for item in value
-            if not (
-                isinstance(item, dict)
-                and set(item) <= {"name", "value"}
-                and item.get("name") in GIT_STATE_PROPERTIES
-            )
-        ]
-    if isinstance(value, str):
-        value = UUID.sub(UUID_PLACEHOLDER, value)
-        return BUILD_STAMP.sub(BUILD_STAMP_PLACEHOLDER, value)
-    return value
+    """Normalize volatiles while preserving reference identity.
+
+    Pass related documents together, e.g. ``{"sbom": sbom, "vex": vex}``,
+    so cross-document references use the same identity map. Declaration
+    paths are stable because these comparisons already require array order
+    to match. Never assign identities from reference order: that would hide
+    rewired edges.
+    """
+    identities = {}
+
+    def collect(item, path):
+        if isinstance(item, dict):
+            for key, child in item.items():
+                location = f"{path}.{key}"
+                if key in {"serialNumber", "bom-ref"} and isinstance(child, str):
+                    identifier = child.removeprefix("urn:uuid:")
+                    if UUID.fullmatch(identifier):
+                        identities.setdefault(identifier, f"<uuid:{location}>")
+                collect(child, location)
+        elif isinstance(item, list):
+            for index, child in enumerate(item):
+                collect(child, f"{path}[{index}]")
+
+    def normalize(item):
+        if isinstance(item, dict):
+            result = {
+                key: normalize(child)
+                for key, child in item.items()
+                if key not in TIMESTAMP_KEYS
+            }
+            if _is_layer_reference(item) and isinstance(result.get("url"), str):
+                result["url"] = LAYER_GIT_URL.sub("", result["url"])
+            return result
+        if isinstance(item, list):
+            return [
+                normalize(child)
+                for child in item
+                if not (
+                    isinstance(child, dict)
+                    and set(child) <= {"name", "value"}
+                    and child.get("name") in GIT_STATE_PROPERTIES
+                )
+            ]
+        if isinstance(item, str):
+            item = UUID.sub(lambda match: identities.get(match[0], match[0]), item)
+            return BUILD_STAMP.sub(BUILD_STAMP_PLACEHOLDER, item)
+        return item
+
+    collect(value, "$")
+    return normalize(value)
 
 
 def first_difference(a, b, path: str = "$") -> str | None:
