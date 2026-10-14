@@ -165,9 +165,40 @@ def test_layer_checkout_baked_into_the_url_compares_equal():
     )
 
 
+def test_layer_references_without_properties_compare_equal():
+    # 1.6 (and older) documents cannot carry properties on external
+    # references, so the class's constant comment is the layer marker;
+    # the release branches validate exactly that profile.
+    def ref(url):
+        return {
+            "externalReferences": [
+                {
+                    "type": "vcs",
+                    "url": url,
+                    "comment": "Yocto metadata layer meta-cyclonedx",
+                }
+            ]
+        }
+
+    clean = ref("git@example.invalid/repo.git@" + "a" * 40)
+    dirty = ref("git@example.invalid/repo.git@" + "b" * 40 + " -- modified")
+    assert document_compare.canonicalize(clean) == document_compare.canonicalize(dirty)
+    assert (
+        document_compare.canonicalize(dirty)["externalReferences"][0]["url"]
+        == "git@example.invalid/repo.git"
+    )
+    # A vcs url without the layer comment is a package's own checkout.
+    other = {
+        "externalReferences": [
+            {"type": "vcs", "url": "git@example.invalid/x.git@" + "c" * 40}
+        ]
+    }
+    assert document_compare.canonicalize(other) == other
+
+
 def test_package_vcs_urls_keep_their_rev():
-    # Only layer references (marked by yocto:layer:* properties) carry
-    # harness git state; a component's own SRCREV url must not be
+    # Only layer references (by comment or yocto:layer:* properties)
+    # carry harness git state; a component's own SRCREV url must not be
     # normalized away.
     package = {
         "components": [
