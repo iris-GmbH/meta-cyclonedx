@@ -11,6 +11,7 @@ its way to a vacuous pass.
 """
 
 import copy
+import uuid
 
 from tests.integration import document_compare
 
@@ -21,6 +22,9 @@ REF_B = "1d2c9f56-78b5-4536-a57c-2f7725525a13"
 
 
 def _documents(serial, ref, timestamp):
+    tool_ref = str(uuid.uuid5(uuid.NAMESPACE_URL, ref + "/tool"))
+    image_ref = str(uuid.uuid5(uuid.NAMESPACE_URL, ref + "/image"))
+    libc_ref = str(uuid.uuid5(uuid.NAMESPACE_URL, ref + "/libc"))
     sbom = {
         "bomFormat": "CycloneDX",
         "specVersion": "1.7",
@@ -30,18 +34,23 @@ def _documents(serial, ref, timestamp):
             "timestamp": timestamp,
             "tools": {
                 "components": [
-                    {"type": "application", "name": "yocto", "bom-ref": ref}
+                    {"type": "application", "name": "yocto", "bom-ref": tool_ref}
                 ]
             },
-            "component": {"name": "core-image-minimal", "bom-ref": ref},
+            "component": {"name": "core-image-minimal", "bom-ref": image_ref},
         },
-        "components": [{"name": "busybox", "version": "1.38.0", "bom-ref": ref}],
+        "components": [
+            {"name": "busybox", "version": "1.38.0", "bom-ref": ref},
+            {"name": "libc", "version": "2.42", "bom-ref": libc_ref},
+        ],
         "dependencies": [
-            {"ref": ref, "dependsOn": []},
+            {"ref": image_ref, "dependsOn": [ref]},
+            {"ref": ref, "dependsOn": [libc_ref]},
+            {"ref": libc_ref, "dependsOn": []},
         ],
     }
     vex = {
-        "serialNumber": f"urn:uuid:{serial}",
+        "serialNumber": f"urn:uuid:{uuid.uuid5(uuid.NAMESPACE_URL, serial + '/vex')}",
         "metadata": {"timestamp": timestamp},
         "vulnerabilities": [
             {
@@ -56,17 +65,41 @@ def _documents(serial, ref, timestamp):
 def test_volatiles_alone_compare_equal():
     a_sbom, a_vex = _documents(SERIAL_A, REF_A, "2026-10-12T22:28:47.615773+00:00")
     b_sbom, b_vex = _documents(SERIAL_B, REF_B, "2026-10-13T09:01:02.000000+00:00")
-    assert document_compare.canonicalize(a_sbom) == document_compare.canonicalize(b_sbom)
-    assert document_compare.canonicalize(a_vex) == document_compare.canonicalize(b_vex)
+    assert document_compare.canonicalize(
+        {"sbom": a_sbom, "vex": a_vex}
+    ) == document_compare.canonicalize({"sbom": b_sbom, "vex": b_vex})
 
 
-def test_uuid_inside_urn_cdx_reference_is_masked():
-    a = {"affects": [{"ref": f"urn:cdx:{SERIAL_A}/1#{REF_A}"}]}
-    b = {"affects": [{"ref": f"urn:cdx:{SERIAL_B}/1#{REF_B}"}]}
-    assert document_compare.canonicalize(a) == document_compare.canonicalize(b)
-    # And the mask must not leave distinguishable serials behind.
-    masked = document_compare.canonicalize(a)["affects"][0]["ref"]
-    assert SERIAL_A not in masked
+def test_dependency_target_change_survives_canonicalization():
+    original, _ = _documents(SERIAL_A, REF_A, "2026-10-12T22:28:47+00:00")
+    changed = copy.deepcopy(original)
+    changed["dependencies"][0]["dependsOn"] = [
+        changed["components"][1]["bom-ref"]
+    ]
+    assert document_compare.canonicalize(original) != document_compare.canonicalize(changed)
+
+
+def test_dangling_vex_reference_survives_canonicalization():
+    sbom, vex = _documents(SERIAL_A, REF_A, "2026-10-12T22:28:47+00:00")
+    changed = copy.deepcopy(vex)
+    changed["vulnerabilities"][0]["affects"][0]["ref"] = (
+        f"urn:cdx:{SERIAL_A}/1#{REF_B}"
+    )
+    assert document_compare.canonicalize(
+        {"sbom": sbom, "vex": vex}
+    ) != document_compare.canonicalize({"sbom": sbom, "vex": changed})
+
+
+def test_vex_reference_to_the_wrong_document_survives_canonicalization():
+    sbom, vex = _documents(SERIAL_A, REF_A, "2026-10-12T22:28:47+00:00")
+    changed = copy.deepcopy(vex)
+    wrong_serial = vex["serialNumber"].removeprefix("urn:uuid:")
+    changed["vulnerabilities"][0]["affects"][0]["ref"] = (
+        f"urn:cdx:{wrong_serial}/1#{REF_A}"
+    )
+    assert document_compare.canonicalize(
+        {"sbom": sbom, "vex": vex}
+    ) != document_compare.canonicalize({"sbom": sbom, "vex": changed})
 
 
 def test_content_difference_survives_canonicalization():
