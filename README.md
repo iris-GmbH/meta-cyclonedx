@@ -60,8 +60,10 @@ INHERIT += "cyclonedx-export"
 
 ### CycloneDX Specification Version
 
-By default, meta-cyclonedx generates **CycloneDX 1.4** format SBOMs. If you
-prefer to use 1.6, you can configure:
+For backwards-compatibility, meta-cyclonedx generates **CycloneDX 1.4** format
+SBOMs on scarthgap by default. The recommended setting is **1.6**, the newer
+format with enhanced metadata and timestamps; to configure it, set in your
+`local.conf`:
 
 ```sh
 CYCLONEDX_SPEC_VERSION = "1.6"
@@ -71,6 +73,12 @@ CYCLONEDX_SPEC_VERSION = "1.6"
 
 - **1.4**: Legacy format for compatibility with older tools (default)
 - **1.6**: Modern format with enhanced metadata and timestamps
+
+**Warning:** the BitBake acceptance harness (`docs/testing.md`) validates
+CycloneDX **1.6** documents only; its kas configuration forces
+`CYCLONEDX_SPEC_VERSION = "1.6"` regardless of this layer's **1.4**
+default. The 1.4 output remains supported, but a build left at the
+default ships a combination the acceptance runs never exercise.
 
 ### Image Component Version
 
@@ -91,6 +99,7 @@ CYCLONEDX_IMAGE_VERSION = "2026.07.0"
 ```
 
 ### Image Component Name
+
 The name of the top-level image component in metadata is `${IMAGE_BASENAME}` by default.
 You can change the name if necessary:
 
