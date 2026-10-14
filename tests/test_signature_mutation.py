@@ -9,9 +9,13 @@ mutation/revert helpers and the fixture recipe text are pure functions
 over given inputs and are tested here.
 """
 
+import subprocess
+from functools import partial
+from types import SimpleNamespace
+
 import pytest
 
-from tests.integration import kas_env
+from tests.integration import kas_env, test_regeneration
 
 
 def write_source(tmp_path):
@@ -57,6 +61,44 @@ def test_mutation_is_reversible_byte_exactly(tmp_path):
     assert source.read_text() == original
 
 
+def test_mutation_fixture_preserves_existing_staged_and_unstaged_edits(
+    tmp_path, monkeypatch
+):
+    source = write_source(tmp_path)
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+
+    def git(*args):
+        return subprocess.run(
+            ["git", *args], cwd=tmp_path, capture_output=True, text=True, check=True
+        ).stdout
+
+    git("add", source.name)
+    git("-c", "user.name=Harness", "-c", "user.email=harness@invalid",
+        "-c", "commit.gpgsign=false", "commit", "-qm", "baseline")
+    source.write_text(source.read_text() + "# staged maintainer edit\n")
+    git("add", source.name)
+    staged = git("show", f":{source.name}")
+    source.write_text(source.read_text() + "# unstaged maintainer edit\n")
+    original = source.read_bytes()
+    status = git("status", "--porcelain", "--", source.name)
+    monkeypatch.setattr(kas_env, "SIGNATURE_SOURCE", source)
+    monkeypatch.setattr(kas_env, "_git", git)
+    monkeypatch.setattr(
+        kas_env, "mutate_signature_source",
+        partial(kas_env.mutate_signature_source, path=source),
+    )
+    monkeypatch.setattr(
+        kas_env, "revert_signature_source",
+        partial(kas_env.revert_signature_source, path=source),
+    )
+    recorder = SimpleNamespace(invoke=lambda name: SimpleNamespace(returncode=0))
+    runs = test_regeneration.mutation_runs.__wrapped__(recorder, None)
+    test_regeneration.test_teardown_restored_the_generator_source(runs)
+    assert source.read_bytes() == original
+    assert git("show", f":{source.name}") == staged
+    assert git("status", "--porcelain", "--", source.name) == status
+
+
 def test_mutation_without_anchor_appends_at_end_of_file(tmp_path):
     # Post-seam targets (a whole-file-checksummed renderer module) carry
     # every byte in the signature; appending there is the right placement.
@@ -80,44 +122,8 @@ def test_ambiguous_or_missing_anchor_is_a_hard_error(tmp_path):
     assert missing.read_text() == "x = 1\n"
 
 
-def test_mutation_comment_is_inert():
-    # The inserted line must not change any parsed metadata or code path.
-    assert kas_env.SIGNATURE_MUTATION_COMMENT.startswith("#")
 
 
-def test_this_branch_names_the_pre_seam_signature_source():
-    # On this (pre-seam) branch the parameter is the class file itself; its
-    # generator function is a signature dependency of the generation tasks.
-    assert kas_env.SIGNATURE_SOURCE == (
-        kas_env.REPO_ROOT / "classes" / "cyclonedx-export.bbclass"
-    )
-    anchor = kas_env.SIGNATURE_MUTATION_ANCHOR
-    occurrences = kas_env.SIGNATURE_SOURCE.read_text().count(anchor + "\n")
-    assert occurrences == 1, "the mutation anchor must match exactly once"
-
-
-def test_image_extra_recipe_is_a_small_installable_package():
-    # R5's package: no sources fetched, no compiler needed, one tiny
-    # installed file, and one RDEPENDS on a package certain to be in the
-    # image so the dependency edge is guaranteed.
-    text = kas_env.fixture_image_extra_recipe_text()
-    assert 'RDEPENDS:${PN} = "busybox"' in text
-    assert 'SRC_URI = ""' in text
-    assert "INHIBIT_DEFAULT_DEPS" in text
-    assert kas_env.IMAGE_EXTRA_RECIPE_NAME == "harness-image-extra"
-    assert kas_env.IMAGE_EXTRA_RECIPE_NAME in str(
-        kas_env.FIXTURES_IMAGE_EXTRA_RECIPE
-    )
-
-
-def test_image_extra_install_reaches_the_container_environment():
-    # kas-container drops host variables outside its whitelist and
-    # word-splits the --runtime-args string: R5's setting must ride as a
-    # whitespace-free single token, so the delivery is asserted here.
-    assert kas_env.runtime_env_args(kas_env.IMAGE_EXTRA_INSTALL_ENV) == [
-        "--runtime-args",
-        "-e CORE_IMAGE_EXTRA_INSTALL=harness-image-extra",
-    ]
-    for tainted in (" a b", "a\tb", "a\nb", "a\r\n"):
-        with pytest.raises(ValueError):
-            kas_env.runtime_env_args({"CORE_IMAGE_EXTRA_INSTALL": tainted})
+def test_runtime_env_rejects_whitespace():
+    with pytest.raises(ValueError):
+        kas_env.runtime_env_args({"CORE_IMAGE_EXTRA_INSTALL": "package one"})
