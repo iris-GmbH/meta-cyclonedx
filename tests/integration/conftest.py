@@ -42,10 +42,15 @@ class KasBuildResult:
 
     @property
     def image_metadata_dir(self):
-        """CycloneDX sstate output for this single-config, machine-specific image."""
+        """CycloneDX sstate output for this single-config, machine-specific image.
+
+        ``CYCLONEDX_IMAGEDATA`` embeds ``BB_CURRENT_MC``, and BitBake
+        names the base (non-multiconfig) configuration "default", so the
+        sstate-restored documents live under that segment.
+        """
         machine_arch = kas_env.MACHINE.replace("-", "_")
         return (
-            self.build_dir / "tmp" / "cyclonedx" / "image"
+            self.build_dir / "tmp" / "cyclonedx" / "image" / "default"
             / machine_arch / kas_env.TARGET
         )
 

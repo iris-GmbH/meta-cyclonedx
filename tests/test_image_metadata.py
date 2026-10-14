@@ -21,7 +21,7 @@ def image_build(tmp_path):
 
 
 def metadata_directory(build):
-    return build.build_dir / "tmp/cyclonedx/image/qemux86_64/core-image-minimal"
+    return build.image_metadata_dir
 
 
 def deploy_metadata(build):
