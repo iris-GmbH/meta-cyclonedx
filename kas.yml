@@ -136,6 +136,15 @@ local_conf_header:
     # Cap disk usage of the shared repo-local workspace.
     INHERIT += "rm_work"
 
+    # This branch's rm_work deletes the stamp of do_populate_lic_deploy
+    # (not an sstate task, not named in a keep-case, so the stamp
+    # loop's catch-all removes it) and the license-manifest task
+    # rescheduled as real work in every warm invocation; oe-core fixed
+    # it later inside rm_work. The fixup class saves the stamps around
+    # that loop. A class file, because .conf files cannot define
+    # functions.
+    INHERIT += "rm-work-lic-fixup"
+
     # The `opengl`/`vulkan` DISTRO_FEATUREs flow into native builds
     # (see DISTRO_FEATURES_FILTER_NATIVE), enabling qemu-native's GL
     # support and mesa-native's vulkan tooling (spirv-llvm-translator,
