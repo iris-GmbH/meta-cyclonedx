@@ -48,6 +48,10 @@ the kas wrapper and records every run against the same workspace:
   dated image artifact is enforced on the invocation that generated the
   documents; over cache-served documents it reports as a skip — byte
   identity of served artifacts is R2's claim.
+  The image-metadata manifest and its SBOM/VEX are captured from
+  `tmp/cyclonedx/image/<machine-arch>/<image-recipe>/` when the run
+  completes. Both manifest-selected documents must match the deployed
+  pair; the rootfs package-list manifest is a separate artifact.
 - **R2 — unchanged re-invocation**: every deployed artifact byte-identical;
   no real task reran (sstate served everything).
 - **R3 — signature-source mutation**: one inert comment is inserted into
@@ -56,16 +60,20 @@ the kas wrapper and records every run against the same workspace:
   (the export class on pre-seam branches, the renderer module on
   post-seam ones). The documents must regenerate:
   serial numbers differ, the raw documents stay schema-valid, and with
-  the volatile fields removed (document serials and the bom-refs derived
-  from them, timestamps, layer git state — both in the `yocto:layer:*`
-  properties and in layer reference URLs — and the build-`DATETIME`
-  suffix of version strings; see `tests/integration/document_compare.py`)
-  they compare equal to R1.
+  the volatile fields normalized (timestamps, layer git state — both
+  in the `yocto:layer:*` properties and layer reference URLs — and the
+  build-`DATETIME` suffix of version strings), they compare equal to R1.
+  Declared serial numbers and bom-refs are mapped to distinct stable
+  identities across the SBOM/VEX pair, preserving dependency targets
+  and cross-document references; dangling references are not masked.
+  See `tests/integration/document_compare.py`.
   Teardown reverts the comment byte-exactly and a follow-up invocation
   must restore the deployed CycloneDX artifacts byte-for-byte. (Image
   artifacts are exempt from that claim: any run that re-parses recipes
   regenerates BitBake's `DATETIME`, and the image files are named after
   it, so their dated names rotate through the mutation run.)
+  Pre-existing staged and unstaged generator edits are preserved; a
+  clean checkout is not required.
   On a workspace whose cache has seen the mutated hash before, BitBake
   may serve the mutated generation from sstate instead of regenerating
   it; `do_rootfs` reruns either way (it has no sstate), so the rerun
@@ -91,10 +99,14 @@ row of the matrix adds only minutes — except the R3 mutated run and
 the R5 run, which reassemble the image rootfs and take a few minutes
 each on a warm cache.
 
-If any BitBake task fails, the harness interrupts the build at once
-(SIGINT to the build process group, so the container shuts down) and
-fails with the build-log tail instead of waiting for in-flight tasks to
-drain.
+If any BitBake task fails, the harness interrupts the build process group
+with SIGINT and reports the build-log tail. The five-minute shutdown
+deadline starts when the failure is observed, not when the build starts;
+remaining processes are killed with SIGKILL after that grace period.
+Interrupting pytest uses the same cleanup, and a second interrupt skips
+the grace period. The recorder reaps the child and joins its output reader
+before returning or propagating an exception, so R3 restores its source
+only after the build has stopped.
 
 The committed `kas.yml` project configuration pins the _release
 coordinates_: each upstream repo has a `branch:` (the release series,

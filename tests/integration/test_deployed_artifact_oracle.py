@@ -9,6 +9,7 @@ deploy-dir artifacts from an earlier run pass the oracle. Selected with
 ``pytest -m integration``; default runs stay unit-only.
 """
 
+import json
 import re
 
 import pytest
@@ -241,5 +242,24 @@ def test_vex_affects_references_resolve_against_sbom(cold_run):
 
 
 def test_image_metadata_bom_manifest_pair_deployed(cold_run):
-    cold_run.deployed(kas_env.SBOM_NAME, "CycloneDX .bom document")
-    cold_run.deployed(kas_env.MANIFEST_NAME, "image rootfs manifest")
+    captures = cold_run.record.image_metadata_captures
+    context = (
+        f"image metadata under {cold_run.build.image_metadata_dir}; "
+        f"build-log tail:\n{cold_run.build.output_tail}"
+    )
+
+    def document(name):
+        assert isinstance(name, str) and name in captures, (
+            f"missing image-metadata document {name!r}; {context}"
+        )
+        try:
+            return json.loads(captures[name])
+        except ValueError as exc:
+            pytest.fail(f"image-metadata document {name!r} is invalid JSON: {exc}; {context}")
+
+    manifest = document("manifest.json")
+    assert isinstance(manifest, dict), f"image-metadata manifest is not an object; {context}"
+    for kind, deployed in (("sbom", cold_run.sbom), ("vex", cold_run.vex)):
+        assert document(manifest.get(kind)) == deployed, (
+            f"image-metadata {kind} differs from the deployed document; {context}"
+        )

@@ -15,6 +15,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 
 import pytest
 
@@ -22,6 +23,7 @@ from tests.integration import kas_env
 
 # BitBake's per-task failure line, surfaced by kas as it streams events.
 _TASK_FAILURE = re.compile(r"ERROR: Task .* failed with exit code")
+_SHUTDOWN_TIMEOUT = 300.0
 
 
 class KasBuildResult:
@@ -38,6 +40,15 @@ class KasBuildResult:
         """The documented output location: TMPDIR/deploy/images/<machine>."""
         return self.build_dir / "tmp" / "deploy" / "images" / kas_env.MACHINE
 
+    @property
+    def image_metadata_dir(self):
+        """CycloneDX sstate output for this single-config, machine-specific image."""
+        machine_arch = kas_env.MACHINE.replace("-", "_")
+        return (
+            self.build_dir / "tmp" / "cyclonedx" / "image"
+            / machine_arch / kas_env.TARGET
+        )
+
     def deployed(self, name):
         return self.deploy_dir / name
 
@@ -45,8 +56,8 @@ class KasBuildResult:
 class RunRecord:
     """Record of one kas invocation within the re-invocation matrix.
 
-    Snapshots the deployed-artifact checksums *and the deployed
-    CycloneDX document contents* at the moment the invocation completes
+    Snapshots deployed-artifact checksums, CycloneDX documents, and
+    image metadata at the moment the invocation completes
     — a later invocation writes the same deploy paths (sstate restores
     older bytes over them), and evidence must name the bytes this run
     deployed, not the current occupants of the file. Also parses
@@ -62,12 +73,19 @@ class RunRecord:
         self.log = "".join(output)
         self.checksums = None
         self.document_captures = {}
+        self.image_metadata_captures = {}
         if build.returncode == 0:
             self.checksums = kas_env.artifact_checksums(build.deploy_dir)
             for doc_name in (kas_env.SBOM_NAME, kas_env.VEX_NAME):
                 path = build.deployed(doc_name)
                 if path.is_file():
                     self.document_captures[doc_name] = path.read_text()
+            metadata_dir = build.image_metadata_dir
+            self.image_metadata_captures = {
+                path.relative_to(metadata_dir).as_posix(): path.read_text()
+                for path in metadata_dir.rglob("*.json")
+                if path.is_file()
+            }
         self.reran_tasks = kas_env.work_tasks_reran(self.log)
         self._documents = None
 
@@ -164,38 +182,59 @@ class KasRunRecorder:
         )
         lines: list[str] = []
         aborted: list[str] = []
+        task_failed = threading.Event()
 
         def pump() -> None:
             for line in proc.stdout:
                 lines.append(line)
                 sys.stderr.write(line)
                 sys.stderr.flush()
-                # A failed BitBake task otherwise lets the build drain every
-                # in-flight task (tens of minutes for an llvm/gcc compile).
-                # Interrupt at the first failure instead; the process group
-                # covers the kas wrapper and the engine's `run` client, so the
-                # container itself shuts down too.
-                if _TASK_FAILURE.search(line) and not aborted:
+                if _TASK_FAILURE.search(line) and not task_failed.is_set():
                     aborted.append(line)
-                    try:
-                        os.killpg(os.getpgid(proc.pid), signal.SIGINT)
-                    except ProcessLookupError:
-                        pass
+                    task_failed.set()
+
+        def signal_group(sig):
+            try:
+                # The group may outlive its leader; getpgid(proc.pid) would
+                # fail once the wrapper exits while descendants still run.
+                os.killpg(proc.pid, sig)
+            except ProcessLookupError:
+                pass
 
         reader = threading.Thread(target=pump)
-        reader.start()
         try:
-            # SIGINT reaches kas and BitBake, which stop cleanly; escalate only
-            # if the shutdown stalls.
-            returncode = proc.wait(timeout=300.0 if aborted else None)
-        except subprocess.TimeoutExpired:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            returncode = proc.wait()
-        reader.join()
+            reader.start()
+            while not task_failed.is_set():
+                try:
+                    proc.wait(timeout=0.1)
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+        finally:
+            # Also runs on KeyboardInterrupt: start_new_session means the
+            # build does not receive the terminal's interrupt itself.
+            try:
+                if proc.poll() is None:
+                    signal_group(signal.SIGINT)
+                deadline = time.monotonic() + _SHUTDOWN_TIMEOUT
+                proc.wait(timeout=_SHUTDOWN_TIMEOUT)
+                if reader.ident is not None:
+                    reader.join(timeout=max(0, deadline - time.monotonic()))
+            except (subprocess.TimeoutExpired, KeyboardInterrupt):
+                # A second interrupt skips the grace period.
+                pass
+            finally:
+                # Kill any remaining descendants as well, including ones
+                # holding stdout open after the wrapper has exited.
+                signal_group(signal.SIGKILL)
+                proc.wait()
+                if reader.ident is not None:
+                    reader.join()
+                proc.stdout.close()
         if aborted:
             lines.append("\nHARNESS: build aborted early (first failed task): "
                          f"{aborted[0].strip()}\n")
-        return returncode, lines
+        return proc.returncode, lines
 
 
 class RunDocuments:

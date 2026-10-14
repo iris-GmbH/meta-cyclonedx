@@ -51,6 +51,7 @@ def mutation_runs(kas_runs, kas_build):
     observes the restored tree, and an invocation crash can never leave
     the layer under test mutated.
     """
+    source_status_before = kas_env.working_tree_status(kas_env.SIGNATURE_SOURCE)
     source_before = kas_env.mutate_signature_source()
     try:
         mutated = kas_runs.invoke("signature-mutation")
@@ -62,7 +63,8 @@ def mutation_runs(kas_runs, kas_build):
         else None
     )
     return SimpleNamespace(
-        mutated=mutated, reverted=reverted, source_before=source_before
+        mutated=mutated, reverted=reverted, source_before=source_before,
+        source_status_before=source_status_before,
     )
 
 
@@ -71,7 +73,7 @@ def image_change(kas_runs, kas_build, mutation_runs):
     """R5: one small package joins the image install list, then re-invoke.
 
     Depends on `mutation_runs` so the signature-mutation evidence is
-    recorded from the pristine tree before anything else moves. The delta
+    recorded before changing the image install list. The delta
     is exactly one package: the recipe rides untracked in the fixture
     layer, the install-list change rides the environment, and teardown
     removes both plus the fixture-layer repository.
@@ -98,14 +100,14 @@ def _record_guard(record, label):
     )
 
 
-def _assert_equal_canonicalized(label, cold, again, name, what):
-    """The two runs' *name* documents equal once volatiles are removed."""
+def _assert_equal_canonicalized(label, cold, again):
+    """Compare the pair together so VEX references retain SBOM identity."""
     difference = document_compare.first_difference(
-        document_compare.canonicalize(cold.document(name, what)),
-        document_compare.canonicalize(again.document(name, what)),
+        document_compare.canonicalize({"sbom": cold.sbom, "vex": cold.vex}),
+        document_compare.canonicalize({"sbom": again.sbom, "vex": again.vex}),
     )
     assert difference is None, (
-        f"the {label} run's canonicalized {what} differs from the cold "
+        f"the {label} run's canonicalized documents differ from the cold "
         f"run: {difference}; build-log tail:\n{again.build.output_tail}"
     )
 
@@ -163,15 +165,6 @@ def test_canonicalized_documents_match_the_cold_run(mutation_runs, cold_run):
         "signature-mutation",
         cold_run,
         mutation_runs.mutated.documents,
-        kas_env.SBOM_NAME,
-        "image SBOM",
-    )
-    _assert_equal_canonicalized(
-        "signature-mutation",
-        cold_run,
-        mutation_runs.mutated.documents,
-        kas_env.VEX_NAME,
-        "image VEX",
     )
 
 
@@ -211,8 +204,8 @@ def test_teardown_restored_the_generator_source(mutation_runs):
         kas_env.SIGNATURE_SOURCE.read_text() == mutation_runs.source_before
     ), "teardown did not restore the signature-carrying source byte-exactly"
     dirt = kas_env.working_tree_status(kas_env.SIGNATURE_SOURCE)
-    assert dirt == "", (
-        f"the mutation run left the layer's working tree dirty:\n{dirt}"
+    assert dirt == mutation_runs.source_status_before, (
+        f"the mutation run changed the generator's pre-existing git status:\n{dirt}"
     )
 
 
