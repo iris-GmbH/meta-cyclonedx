@@ -124,6 +124,15 @@ local_conf_header:
     # `env` above); disable by pointing it at an inert location.
     SSTATE_MIRRORS ?= "file://.* http://sstate.yoctoproject.org/all/PATH;downloadfilename=PATH"
 
+    # Hash equivalence against the Yocto Project's public server (read-only
+    # upstream; reports never leave this machine, and bitbake degrades to a
+    # warning when the endpoint is unreachable): maps locally recomputed task
+    # hashes onto the autobuilder's, so sstate reused across invocations and
+    # mirror objects resolve despite exact-hash drift.
+    BB_SIGNATURE_HANDLER = "OEEquivHash"
+    BB_HASHSERVE = "auto"
+    BB_HASHSERVE_UPSTREAM = "wss://hashserv.yoctoproject.org/ws"
+
     # Cap disk usage of the shared repo-local workspace.
     INHERIT += "rm_work"
 
