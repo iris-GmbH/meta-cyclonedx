@@ -102,9 +102,24 @@ class KasRunRecorder:
         run's install-list forwarding) via the wrapper's --runtime-args
         channel — a plain host export would be dropped by the wrapper's
         environment whitelist — and never leaks into another run.
+
+        A failed invocation aborts the remaining stages: BitBake did
+        not advance any stamp, so the next invocation would replay the
+        identical failure for minutes or hours while every stage
+        observation is guarded off the failed build anyway. Zero-exit
+        invocations never gate, keeping stage independence for
+        assertion failures.
         """
         if name in self.results:
             return self.results[name]
+        for failed in self.results.values():
+            if failed.returncode != 0:
+                pytest.skip(
+                    f"prior kas invocation {failed.name!r} failed "
+                    f"(exit {failed.returncode}); later stages would "
+                    "only replay it\nbuild-log tail:\n"
+                    f"{failed.output_tail}"
+                )
         if not self._pinned:
             try:
                 kas_env.ensure_kas_submodule()
