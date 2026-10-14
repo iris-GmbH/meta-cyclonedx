@@ -41,10 +41,13 @@ GIT_STATE_PROPERTIES = frozenset({"yocto:layer:rev", "yocto:layer:is_modified"})
 
 
 #: The same git state's second carrier: layer external references spell
-#: the checkout into their url — `<remote>@<rev>` plus a ` -- modified`
-#: flag while the tree is dirty (R3 dirties it by design). Normalized
-#: only on items whose yocto:layer:* properties mark them as layer
-#: references, so a package's own SRCREV vcs url keeps its teeth.
+#: the checkout into their url - `<remote>@<rev>` plus a ` -- modified`
+#: flag while the tree is dirty (R3 dirties it by design). A reference is
+#: recognized as a layer reference by its `yocto:layer:*` properties (the
+#: 1.7 documents carry them) or, for spec versions whose schema has no
+#: properties on external references (1.6 and older), by the class's
+#: constant `Yocto metadata layer <name>` comment - so a package's own
+#: SRCREV vcs url keeps its teeth.
 LAYER_GIT_URL = re.compile(r"(?:@[0-9a-fA-F]{7,40})?(?: -- modified)?$")
 
 #: BitBake's build stamp as it rides the image component's version
@@ -55,7 +58,13 @@ BUILD_STAMP_PLACEHOLDER = "-<DATETIME>"
 
 
 def _is_layer_reference(item):
-    return isinstance(item, dict) and any(
+    if not isinstance(item, dict):
+        return False
+    if item.get("type") == "vcs" and str(item.get("comment", "")).startswith(
+        "Yocto metadata layer "
+    ):
+        return True
+    return any(
         isinstance(prop, dict)
         and str(prop.get("name", "")).startswith("yocto:layer:")
         for prop in item.get("properties", [])
