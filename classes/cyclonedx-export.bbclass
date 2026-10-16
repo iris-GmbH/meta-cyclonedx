@@ -753,7 +753,7 @@ def redact_credentials(text):
     """
     import re
 
-    return re.sub(r"([a-zA-Z][a-zA-Z0-9+.\-]*)://[^/?#@:\s]+(:[^/?#@:\s]*)?@(?!.service)",
+    return re.sub(r"([a-zA-Z][a-zA-Z0-9+.\-]*)://(?!git@)[^/?#@:\s]+(:[^/?#@:\s]*)?@(?!.service)",
                   r"\1://***@", str(text))
 
 def strip_credentials(url):
@@ -770,8 +770,8 @@ def strip_credentials(url):
     try:
         scheme, netloc, path, query, fragment = urllib.parse.urlsplit(url)
     except ValueError:
-        return re.sub(r"://[^/?#@]*@(?!.service)", "://", str(url))
-    if "@" not in netloc or "@.service" in netloc:
+        return re.sub(r"://(?!git@)[^/?#@]*@(?!.service)", "://", str(url))
+    if "@" not in netloc or "@.service" in netloc or netloc.startswith("git@"):
         return url
     return urllib.parse.urlunsplit((scheme, netloc.partition("@")[2], path, query, fragment))
 
