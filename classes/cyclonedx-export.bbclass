@@ -48,6 +48,9 @@ CYCLONEDX_IMAGE_NAME ??= "${IMAGE_BASENAME}"
 # Type string for metadata.component in the CycloneDX SBOM.
 CYCLONEDX_IMAGE_TYPE ??= "firmware"
 
+# Type string for components[].type in the CycloneDX SBOM.
+CYCLONEDX_COMPONENT_TYPE ??= "library"
+
 # Version string for metadata.component in the CycloneDX SBOM.
 CYCLONEDX_IMAGE_VERSION ??= "${DISTRO_VERSION}${IMAGE_VERSION_SUFFIX}"
 
@@ -180,9 +183,11 @@ python () {
             bb.warn("CVE_STATUS_GROUPS contains undefined variable %s" % cve_status_group)
 
     # Validate renderer-relevant configuration; the supported CycloneDX
-    # versions and image types are owned by the renderer.
+    # versions and component types are owned by the renderer.
+    components_type_vars = ["CYCLONEDX_IMAGE_TYPE", "CYCLONEDX_COMPONENT_TYPE"]
     error = _cyclonedx_renderer(d).config_errors(
-        d.getVar("CYCLONEDX_SPEC_VERSION"), d.getVar("CYCLONEDX_IMAGE_TYPE"),
+        d.getVar("CYCLONEDX_SPEC_VERSION"),
+        {var:d.getVar(var) for var in components_type_vars},
         d.getVar("CYCLONEDX_IMAGE_CPE"))
     if error:
         bb.fatal(error)
@@ -206,6 +211,9 @@ python do_populate_cyclonedx() {
     name = d.getVar("CVE_PRODUCT")
     version = d.getVar("CVE_VERSION")
     cpe_update = d.getVar("CYCLONEDX_CPE_UPDATE")
+
+    # get component type
+    component_type = d.getVar("CYCLONEDX_COMPONENT_TYPE")
 
     # We create and populate a per-recipe partial sbom which will be added to the sstate cache
     pn_list = {}
@@ -243,7 +251,7 @@ python do_populate_cyclonedx() {
             purl = spdx_purls[0]
         else:
             purl = 'pkg:generic/{}{}@{}'.format(f"{vendor}/" if vendor else '', product, short_version)
-        for pkg in renderer.component_identity(name, version, cpe_update, purl, references):
+        for pkg in renderer.component_identity(name, version, cpe_update, purl, component_type, references):
             # Check if we already have a package with this CPE
             existing_pkg = next((c for c in pn_list["pkgs"] if c["cpe"] == pkg["cpe"]), None)
             if existing_pkg:
