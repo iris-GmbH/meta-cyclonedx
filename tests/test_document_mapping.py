@@ -91,15 +91,21 @@ def test_spec_16_omits_citations_and_tlp():
 
 
 def test_config_validation_names_supported_values():
-    assert meta_cyclonedx.config_errors("1.7", "firmware") is None
+    assert meta_cyclonedx.config_errors(
+        "1.7", {"CYCLONEDX_IMAGE_TYPE": "firmware"}) is None
 
-    error = meta_cyclonedx.config_errors("1.4", "firmware")
+    error = meta_cyclonedx.config_errors("1.4", {"CYCLONEDX_IMAGE_TYPE": "firmware"})
     assert "Unsupported CYCLONEDX_SPEC_VERSION: 1.4" in error
     assert "1.6" in error and "1.7" in error
 
-    error = meta_cyclonedx.config_errors("1.7", "kitchen-appliance")
+    error = meta_cyclonedx.config_errors("1.7", {"CYCLONEDX_IMAGE_TYPE": "kitchen-appliance"})
     assert "CYCLONEDX_IMAGE_TYPE" in error
     assert "firmware" in error
+
+    error = meta_cyclonedx.config_errors(
+        "1.7", {"CYCLONEDX_IMAGE_TYPE": "firmware",
+                "CYCLONEDX_COMPONENT_TYPE": "kitchen-appliance"})
+    assert "CYCLONEDX_COMPONENT_TYPE" in error
 
 
 def test_primary_cpe_and_purl_facts_are_emitted_on_the_component():

@@ -46,11 +46,14 @@ def test_configured_cpe_override_is_returned_verbatim():
 
 def test_configured_cpe_override_is_validated():
     assert meta_cyclonedx.config_errors(
-        "1.7", "firmware", "cpe:2.3:o:linux:linux_kernel:6.18.56:*:*:*:*:*:*:*") is None
+        "1.7", {"CYCLONEDX_IMAGE_TYPE": "firmware"},
+        "cpe:2.3:o:linux:linux_kernel:6.18.56:*:*:*:*:*:*:*") is None
 
-    error = meta_cyclonedx.config_errors("1.7", "firmware", "cpe:2.3:z:v:p:1:*:*:*:*:*:*:*")
+    error = meta_cyclonedx.config_errors(
+        "1.7", {"CYCLONEDX_IMAGE_TYPE": "firmware"}, "cpe:2.3:z:v:p:1:*:*:*:*:*:*:*")
     assert error is not None and "CYCLONEDX_IMAGE_CPE" in error
-    assert meta_cyclonedx.config_errors("1.7", "firmware", "not a cpe") is not None
+    assert meta_cyclonedx.config_errors(
+        "1.7", {"CYCLONEDX_IMAGE_TYPE": "firmware"}, "not a cpe") is not None
 
 
 def test_purl_without_layer_facts_is_the_base_purl():
