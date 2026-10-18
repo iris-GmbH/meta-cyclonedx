@@ -56,8 +56,8 @@ from datetime import datetime, timezone
 
 SUPPORTED_SPEC_VERSIONS = ["1.6", "1.7"]
 
-# Image types supported by CycloneDX 1.6 and 1.7
-SUPPORTED_IMAGE_TYPES = [
+# Component types supported by CycloneDX 1.6 and 1.7
+SUPPORTED_COMPONENT_TYPES = [
     "application",
     "framework",
     "library",
@@ -74,7 +74,7 @@ SUPPORTED_IMAGE_TYPES = [
 ]
 
 
-def config_errors(spec_version, image_type):
+def config_errors(spec_version, component_types):
     """
     Validate renderer-relevant configuration and return a human-readable
     fatal error string, or None when the configuration is supported.
@@ -83,15 +83,16 @@ def config_errors(spec_version, image_type):
         return (f"Unsupported CYCLONEDX_SPEC_VERSION: {spec_version}. "
                 f"Supported versions: {', '.join(SUPPORTED_SPEC_VERSIONS)}")
 
-    if image_type not in SUPPORTED_IMAGE_TYPES:
-        return (
-            f"Unsupported CYCLONEDX_IMAGE_TYPE value '{image_type}'. "
-            f"Valid types are: {', '.join(SUPPORTED_IMAGE_TYPES)}"
-        )
+    for component_type_var, component_type_val in component_types.items():
+        if component_type_val not in SUPPORTED_COMPONENT_TYPES:
+            bb.fatal(
+                f"Unsupported {component_type_var} value '{component_type_val}'. "
+                f"Valid types are: {', '.join(SUPPORTED_COMPONENT_TYPES)}"
+            )
     return None
 
 
-def component_identity(products_names, version, cpe_update, purl, external_references=None):
+def component_identity(products_names, version, cpe_update, purl, component_type, external_references=None):
     """
     Build one component identity record per vulnerability-correlation
     product name of a recipe. Names carrying a "vendor:" qualifier gain a
@@ -121,7 +122,7 @@ def component_identity(products_names, version, cpe_update, purl, external_refer
         pkg = {
             "name": product,
             "version": version,
-            "type": "library",
+            "type": component_type,
             "cpe": 'cpe:2.3:*:{}:{}:{}:{}:*:*:*:*:*:*'.format(vendor or "*", product, version, cpe_update),
             "purl": purl,
             "bom-ref": str(uuid.uuid4())
