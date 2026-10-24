@@ -1,0 +1,3 @@
+# Do not expose a conformance profile
+
+meta-cyclonedx will expose a versioned TR-03183-2 alignment profile, with separate `report` and `strict` enforcement, but will never label generated output conformant. Strict enforcement fails on every machine-detectable violation or missing required assertion; the alignment report distinguishes verified, asserted, unmet, and unverifiable requirements. The pinned official CycloneDX schema and project-owned requirements matrix are authoritative, with community validators used only for differential checks. Because Yocto metadata cannot prove scope or dependency completeness, conformance determination remains the manufacturer's responsibility and requires external evidence. This supersedes ADR-0001, ADR-0007, and ADR-0010.

@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: MIT
+#
+# Builds the acceptance runner image (runner-image/Dockerfile) on demand
+# and publishes it into *this* repository's own container package
+# namespace, tagged <kas-tag>-<runner-version>. Dispatch-only: the image
+# changes exactly when the kas submodule pin or the runner version
+# argument changes, which are tracked edits reviewed on their own.
+#
+# The same file runs identically on the fork and upstream — every
+# reference is same-origin, so merging it anywhere is a non-event.
+
+name: runner-image
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+          fetch-depth: 0
+      - name: Resolve the image reference
+        id: image
+        run: |
+          kas_tag="$(git -C tools/kas describe --tags --exact-match)"
+          runner_version="$(sed -n 's/^ARG RUNNER_VERSION=\([^[:space:]]*\).*/\1/p' \
+            .github/runner-image/Dockerfile)"
+          echo "kas_tag=${kas_tag#v}" >> "$GITHUB_OUTPUT"
+          echo "runner_version=${runner_version}" >> "$GITHUB_OUTPUT"
+          echo "name=ghcr.io/${GITHUB_REPOSITORY}/kas-runner:${kas_tag#v}-${runner_version}" \
+            >> "$GITHUB_OUTPUT"
+      - name: Build
+        run: |
+          docker build \
+            --build-arg "KAS_TAG=${{ steps.image.outputs.kas_tag }}" \
+            -t "${{ steps.image.outputs.name }}" \
+            .github/runner-image
+      - name: Smoke-check the image
+        run: |
+          docker run --rm "${{ steps.image.outputs.name }}" --version |
+            grep -F "kas ${{ steps.image.outputs.kas_tag }}"
+          docker run --rm --entrypoint \
+            /builder/actions-runner/bin/Runner.Listener \
+            "${{ steps.image.outputs.name }}" --version |
+            grep -Fx "${{ steps.image.outputs.runner_version }}"
+      - name: Publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" \
+            --password-stdin
+          docker push "${{ steps.image.outputs.name }}"
