@@ -59,6 +59,16 @@ CYCLONEDX_IMAGE_TYPE ??= "firmware"
 # Version string for metadata.component in the CycloneDX SBOM.
 CYCLONEDX_IMAGE_VERSION ??= "${DISTRO_VERSION}${IMAGE_VERSION_SUFFIX}"
 
+# Vendor string for the CPE of metadata.component in the CycloneDX SBOM.
+CYCLONEDX_IMAGE_VENDOR ??= ""
+
+# Add a CPE and PURL to metadata.component in the CycloneDX SBOM.
+CYCLONEDX_IMAGE_ADD_CPE_AND_PURL ??= "0"
+
+# CPE 2.3 string for metadata.component in the CycloneDX SBOM. Replaces the
+# generated CPE entirely; validated against the CPE 2.3 grammar.
+CYCLONEDX_IMAGE_CPE ??= ""
+
 # Add layer sources as external references to metadata.component in the
 # CycloneDX SBOM.
 CYCLONEDX_ADD_LAYER_REFERENCES ??= "1"
@@ -183,7 +193,8 @@ python () {
     # Validate renderer-relevant configuration; the supported CycloneDX
     # versions and image types are owned by the renderer.
     error = _cyclonedx_renderer(d).config_errors(
-        d.getVar("CYCLONEDX_SPEC_VERSION"), d.getVar("CYCLONEDX_IMAGE_TYPE"))
+        d.getVar("CYCLONEDX_SPEC_VERSION"), d.getVar("CYCLONEDX_IMAGE_TYPE"),
+        d.getVar("CYCLONEDX_IMAGE_CPE"))
     if error:
         bb.fatal(error)
 }
@@ -701,6 +712,63 @@ def strip_credentials(url):
         return url
     return urllib.parse.urlunsplit((scheme, netloc.partition("@")[2], path, query, fragment))
 
+def get_layer_public_remote_url(layer_path, layer_name):
+    """
+    Get the remote url of a layer with the credentials stripped.
+    If this fails, raise a RuntimeError with the "cyclonedx-export" prefix and
+    the reason.
+    """
+    import oe.buildcfg
+
+    try:
+        repo_path = oe.buildcfg.get_metadata_git_toplevel(layer_path)
+        if not repo_path:
+            raise RuntimeError(f"cyclonedx-export: layer {layer_name} is not part of a git repository")
+        remotes = oe.buildcfg.get_metadata_git_remotes(repo_path)
+        if not remotes:
+            raise RuntimeError(f"cyclonedx-export: layer {layer_name} has no git remotes")
+        remote_url = oe.buildcfg.get_metadata_git_remote_url(repo_path, remotes[0])
+    except (IndexError, OSError) as e:
+        raise RuntimeError(f"cyclonedx-export: cannot resolve the remote url of layer {layer_name}: {redact_credentials(e)}")
+
+    # Only layers with a resolvable remote url get a reference.
+    if not remote_url:
+        raise RuntimeError(f"cyclonedx-export: layer {layer_name} has no resolvable remote url")
+
+    # Credentials in a remote url are not publishable; keep the host/path.
+    public_remote_url = strip_credentials(remote_url)
+    if public_remote_url != remote_url:
+        bb.warn(f"cyclonedx-export: stripped credentials from the remote url of layer {layer_name}")
+    return public_remote_url
+
+def image_purl_facts(d):
+    """
+    Collect the base PURL and the layer facts of the image PURL. Returns a
+    (base_purl, layer_version, repository_url) tuple; facts that cannot be
+    resolved are None and the renderer omits the matching qualifier.
+    """
+    import oe.purl
+    import oe.buildcfg
+
+    base_purl = oe.purl.get_base_purl(d)
+    source_layer = find_local_source_layer(d, d.getVar("FILE"))
+    if source_layer is None:
+        bb.warn("cyclonedx-export: the image recipe is outside the configured layers, not adding layer qualifiers to the image PURL")
+        return base_purl, None, None
+
+    layer_path = source_layer["root"]
+    layer_version = oe.buildcfg.get_metadata_git_revision(layer_path)
+    if not layer_version or layer_version == "<unknown>":
+        layer_version = None
+    try:
+        repository_url = get_layer_public_remote_url(layer_path, source_layer["name"])
+    except RuntimeError as e:
+        if not str(e).startswith("cyclonedx-export"):
+            raise
+        bb.warn(f"{e}, not including its remote url in the image PURL")
+        repository_url = None
+    return base_purl, layer_version, repository_url
+
 def generate_layer_references(d):
     """
     Get a list of externalReferences for the layers
@@ -713,28 +781,12 @@ def generate_layer_references(d):
     layers = oe.buildcfg.get_layer_revisions(d)
     for (path, name, branch, rev, ismodified) in layers:
         try:
-            repo_path = oe.buildcfg.get_metadata_git_toplevel(path)
-            if not repo_path:
-                bb.warn(f"cyclonedx-export: layer {name} is not part of a git repository, skipping its external reference")
-                continue
-            remotes = oe.buildcfg.get_metadata_git_remotes(repo_path)
-            if not remotes:
-                bb.warn(f"cyclonedx-export: layer {name} has no git remotes, skipping its external reference")
-                continue
-            remote_url = oe.buildcfg.get_metadata_git_remote_url(repo_path, remotes[0])
-        except (IndexError, OSError) as e:
-            bb.warn(f"cyclonedx-export: cannot resolve the remote url of layer {name}, skipping its external reference: {redact_credentials(e)}")
+            public_remote_url = get_layer_public_remote_url(path, name)
+        except RuntimeError as e:
+            if not str(e).startswith("cyclonedx-export"):
+                raise
+            bb.warn(f"{e}, skipping its external reference")
             continue
-
-        # Only layers with a resolvable remote url get a reference.
-        if not remote_url:
-            bb.warn(f"cyclonedx-export: layer {name} has no resolvable remote url, skipping its external reference")
-            continue
-
-        # Credentials in a remote url are not publishable; keep the host/path.
-        public_remote_url = strip_credentials(remote_url)
-        if public_remote_url != remote_url:
-            bb.warn(f"cyclonedx-export: stripped credentials from the remote url of layer {name}")
 
         reference = {
             "url": f"{public_remote_url}@{rev}{ismodified}",
@@ -790,6 +842,7 @@ def find_local_source_layer(d, local_path):
         return None
     return {
         "name": match[1],
+        "root": match[0],
         "path": match[2].replace(os.sep, "/")
     }
 
@@ -1223,6 +1276,15 @@ def export_cyclonedx(d):
         "name": d.getVar("CYCLONEDX_IMAGE_NAME") or d.getVar("PN") or "image",
         "version": d.getVar("CYCLONEDX_IMAGE_VERSION") or "unknown",
     }
+    if d.getVar("CYCLONEDX_IMAGE_ADD_CPE_AND_PURL") == "1":
+        renderer = _cyclonedx_renderer(d)
+        primary["cpe"] = renderer.image_cpe(
+            primary["type"],
+            d.getVar("CYCLONEDX_IMAGE_VENDOR") or "",
+            primary["name"],
+            primary["version"],
+            d.getVar("CYCLONEDX_IMAGE_CPE") or None)
+        primary["purl"] = renderer.image_purl(*image_purl_facts(d))
     if d.getVar("CYCLONEDX_ADD_LAYER_REFERENCES") == "1":
         primary["external_references"] = generate_layer_references(d)
 
