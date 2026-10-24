@@ -50,15 +50,17 @@ FIXTURES_RECIPE = (
     FIXTURES_LAYER / "recipes-support" / "harness-unused" / "harness-unused_0.1.bb"
 )
 
-#: R3's mutation target: the *signature-carrying generator source* — the
+#: R3's mutation target: the *signature-carrying generator source*, the
 #: tracked file whose content rides into the generation tasks' signatures.
-#: On this pre-seam branch that is the export class itself: its
-#: `export_cyclonedx` function is a codependency of the image's
-#: do_rootfs (through ROOTFS_POSTUNINSTALL_COMMAND) and of
-#: do_deploy_cyclonedx, so its source text is part of those tasks'
-#: signatures. Post-seam branches set this to the renderer module instead
-#: — the matrix code never hardcodes a path.
-SIGNATURE_SOURCE = REPO_ROOT / "classes" / "cyclonedx-export.bbclass"
+#: On this post-seam branch that is the renderer module: the class wires
+#: it into do_populate_cyclonedx, do_rootfs, do_deploy_cyclonedx and
+#: do_cyclonedx_sbom_cve_check via [file-checksums], so every byte of it
+#: is part of those tasks' signatures. Pre-seam branches set this to the
+#: export class instead (its `export_cyclonedx` function is a codependency
+#: of do_rootfs through ROOTFS_POSTUNINSTALL_COMMAND and of
+#: do_deploy_cyclonedx). The matrix code never hardcodes a
+#: path.
+SIGNATURE_SOURCE = REPO_ROOT / "lib" / "meta_cyclonedx.py"
 
 #: Where the mutation comment lands: immediately after this exact line,
 #: one indent deeper. A comment at the end of the file is invisible to
@@ -66,7 +68,7 @@ SIGNATURE_SOURCE = REPO_ROOT / "classes" / "cyclonedx-export.bbclass"
 #: changes every signature that reaches it. None means append at the end
 #: of the file — the correct placement for targets checksummed whole (a
 #: post-seam renderer module wired in via file-checksums).
-SIGNATURE_MUTATION_ANCHOR = "def export_cyclonedx(d):"
+SIGNATURE_MUTATION_ANCHOR = None
 
 #: The inert comment the mutation-run (R3) inserts.
 SIGNATURE_MUTATION_COMMENT = (

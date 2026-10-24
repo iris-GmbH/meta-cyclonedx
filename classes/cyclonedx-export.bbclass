@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: Copyright (C) 2022 BG Networks, Inc.
 # SPDX-FileCopyrightText: Copyright (C) 2024 Savoir-faire Linux Inc. (<www.savoirfairelinux.com>).
-# SPDX-FileCopyrightText: Copyright (C) 2024 iris-GmbH infrared & intelligent sensors.
-# SPDX-FileCopyrightText: Copyright (C) 2025 balena, inc.
+# SPDX-FileCopyrightText: Copyright (C) 2026 iris-GmbH infrared & intelligent sensors.
 
 # The product name that the CVE database uses.  Defaults to BPN, but may need to
 # be overriden per recipe (for example tiff.bb sets CVE_PRODUCT=libtiff).
@@ -136,42 +135,57 @@ CYCLONEDX_SBOM_CVE_CHECK_IMAGEDATA_WORKDIR = "${WORKDIR}/cyclonedx-sbom-cve-chec
 # don't know it until after we generate the sbom export header file
 CYCLONEDX_SBOM_SERIAL_PLACEHOLDER = "<SBOM_SERIAL>"
 
+def _cyclonedx_renderer(d):
+    """
+    Return the layer's document renderer module.
+
+    Task code runs in a bitbake-worker whose module search path does not
+    include the layer's lib directory, so the module is loaded by path and
+    cached in sys.modules for the lifetime of the process. All document
+    semantics (identity, graph construction, document mapping, validation,
+    rendering) live there; this class only collects facts, orders tasks and
+    deploys output.
+    """
+    import importlib.util
+    import sys
+
+    name = "meta_cyclonedx"
+    module = sys.modules.get(name)
+    if module is None:
+        path = os.path.join(d.getVar("CYCLONEDX_LAYERDIR"), "lib", "meta_cyclonedx.py")
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    return module
+
+def _cyclonedx_log(level, message):
+    """
+    Route renderer diagnostics into the build log. The renderer reports a
+    severity (an int debug level or "warn", "error", "note") and stays
+    independent of BitBake's messaging itself.
+    """
+    if level == "warn":
+        bb.warn(message)
+    elif level == "error":
+        bb.error(message)
+    elif level == "note":
+        bb.note(message)
+    else:
+        bb.debug(level, message)
+
 python () {
     from oe.cve_check import extend_cve_status
 
     # resolve CVE_CHECK_IGNORE and CVE_STATUS_GROUPS
     extend_cve_status(d)
 
-    # Validate CycloneDX specification version
-    spec_version = d.getVar("CYCLONEDX_SPEC_VERSION")
-    if spec_version not in ["1.6", "1.7"]:
-        bb.fatal(f"Unsupported CYCLONEDX_SPEC_VERSION: {spec_version}. Supported versions: 1.6, 1.7")
-
-    # Check for valid image type values
-    image_type = d.getVar("CYCLONEDX_IMAGE_TYPE")
-
-    # Image types supported by CycloneDX 1.6 and 1.7
-    supported_image_types = [
-        "application",
-        "framework",
-        "library",
-        "container",
-        "operating-system",
-        "device",
-        "firmware",
-        "file",
-        "platform",
-        "device-driver",
-        "machine-learning-model",
-        "data",
-        "cryptographic-asset",
-    ]
-
-    if image_type not in supported_image_types:
-        bb.fatal(
-            f"Unsupported CYCLONEDX_IMAGE_TYPE value '{image_type}'. "
-            f"Valid types are: {', '.join(supported_image_types)}"
-        )
+    # Validate renderer-relevant configuration; the supported CycloneDX
+    # versions and image types are owned by the renderer.
+    error = _cyclonedx_renderer(d).config_errors(
+        d.getVar("CYCLONEDX_SPEC_VERSION"), d.getVar("CYCLONEDX_IMAGE_TYPE"))
+    if error:
+        bb.fatal(error)
 }
 
 python () {
@@ -209,8 +223,17 @@ python do_populate_cyclonedx() {
     # This prevents self-dependencies when multiple packages share the same CPE
     bom_ref_dedup_map = {}
 
+    # The renderer owns component identity. The package URL and any
+    # SRC_URI external references are artifact facts collected here.
+    renderer = _cyclonedx_renderer(d)
+    import oe.purl
+    spdx_purls = (d.getVar("SPDX_PACKAGE_URLS") or "").split()
+    purl = spdx_purls[0] if spdx_purls else oe.purl.get_base_purl(d)
+    references = (generate_source_references(d)
+                  if d.getVar("CYCLONEDX_ADD_COMPONENT_SOURCE_REFERENCES") == "1" else None)
+
     # append all defined package names for recipe to pn_list pkgs
-    for pkg in generate_packages_list(d, name, version):
+    for pkg in renderer.component_identity(name, version, purl, references):
         # Check if we already have a package with this CPE
         existing_pkg = next((c for c in pn_list["pkgs"] if c["cpe"] == pkg["cpe"]), None)
         if existing_pkg:
@@ -242,7 +265,11 @@ python do_populate_cyclonedx() {
                 cve_info["status"],
                 cve_info.get("justification", "")
             )
-            append_to_vex(d, cve, cves, bom_ref)
+            renderer.add_status_vex_statement(
+                cve, cves, bom_ref, d.getVar("BPN"),
+                d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER'),
+                d.getVar('CYCLONEDX_ADD_VULN_TIMESTAMPS') == "1",
+                log=_cyclonedx_log)
 
     # append any cve status within recipe to pn_list cves
     pn_list["cves"] = cves
@@ -274,7 +301,7 @@ python do_populate_cyclonedx() {
     # Fold in CycloneDX documents produced by the recipe itself (cargo, npm, go,
     # ...). They are stored aside from "pkgs"/"dependencies" because they are
     # already fully resolved and must bypass the CPE deduplication and the
-    # recipe-name dependency remapping that export_cyclonedx() applies to
+    # recipe-name dependency remapping that the renderer applies to
     # Yocto-derived components.
     extra_components = []
     extra_dependencies = []
@@ -299,7 +326,7 @@ python do_populate_cyclonedx() {
         # recipe builds -- is by convention not repeated in "components", yet
         # the dependency edges reference it. Carry it over explicitly, or the
         # merged tree hangs off a bom-ref that resolves to nothing, and remember
-        # it so export_cyclonedx() can attach the tree to the recipe.
+        # it so the renderer can attach the tree to the recipe.
         root = (extra_bom.get("metadata") or {}).get("component") or {}
         if root.get("bom-ref"):
             components = components + [root]
@@ -361,16 +388,8 @@ python do_populate_cyclonedx() {
                 continue
             if cve_id in existing_ids:
                 continue
-            cves.append({
-                'id': cve_id,
-                'source': {'name': 'NVD', 'url': f'https://nvd.nist.gov/vuln/detail/{cve_id}'},
-                'analysis': {
-                    'state': 'not_affected',
-                    'justification': 'code_not_present',
-                    'detail': entry.get('description', ''),
-                },
-                'affects': [{'ref': f"urn:cdx:{placeholder}/1#{ref}"} for ref in bom_refs],
-            })
+            cves.append(renderer.kernel_vex_statement(
+                cve_id, bom_refs, placeholder, entry.get('description', '')))
             added += 1
         bb.note(f"cyclonedx-export: added {added} not_affected kernel CVE entries")
 
@@ -627,78 +646,6 @@ def get_custom_properties(d):
         properties.append({"name": name, "value": value})
     return properties
 
-def create_tools_metadata(d):
-    """
-    Create tools metadata in the CycloneDX 1.6+ object format:
-    {"components": [{"type": "application", "name": "yocto", ...}]}
-    """
-    import uuid
-
-    return {
-        "components": [
-            {
-                "type": "application",
-                "name": "yocto",
-                "bom-ref": str(uuid.uuid4())
-            }
-        ]
-    }
-
-def create_citations(d, metadata):
-    """
-    Create the root-level citations array for CycloneDX 1.7 to document SBOM
-    provenance.
-
-    Each citation requires a timestamp, must point at the fields it attributes
-    (pointers) and name who supplied the data (attributedTo). The document
-    timestamp and the bom-ref of the yocto tool component are reused from the
-    document's own metadata so the citation resolves cleanly.
-    """
-    from datetime import datetime, timezone
-
-    tool_refs = [
-        comp["bom-ref"]
-        for comp in (metadata.get("tools") or {}).get("components", [])
-        if comp.get("bom-ref")
-    ]
-    if not tool_refs:
-        bb.warn("CYCLONEDX_ADD_CITATION: no tool bom-ref to attribute citation to, skipping")
-        return []
-
-    citation = {
-        "timestamp": metadata.get("timestamp") or datetime.now(timezone.utc).isoformat(),
-        # JSON pointer "" refers to the whole document: every field in it
-        # was generated by the cited tool.
-        "pointers": [""],
-        "attributedTo": tool_refs[0],
-        "note": "Generated by meta-cyclonedx layer for Yocto Project (https://github.com/iris-GmbH/meta-cyclonedx)"
-    }
-    return [citation]
-
-def add_document_extensions(d, doc):
-    """
-    Add CycloneDX 1.7 specific document extensions: root-level citations and
-    the TLP marking in metadata.distributionConstraints.
-    Modifies the document dict in place.
-    """
-    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION')
-
-    if spec_version != "1.7":
-        return
-
-    # Add TLP marking if specified.
-    tlp_marking = d.getVar('CYCLONEDX_TLP_MARKING')
-    if tlp_marking and tlp_marking in ["CLEAR", "GREEN", "AMBER", "AMBER_AND_STRICT", "RED"]:
-        doc.setdefault("metadata", {}).setdefault("distributionConstraints", {})["tlp"] = tlp_marking
-        bb.debug(2, f"Added TLP marking: {tlp_marking}")
-
-    # Add citations if enabled.
-    add_citation = d.getVar('CYCLONEDX_ADD_CITATION')
-    if add_citation == "1":
-        citations = create_citations(d, doc.get("metadata") or {})
-        if citations:
-            doc["citations"] = citations
-            bb.debug(2, "Added citations to SBOM")
 
 def get_recipe_dependencies(d):
     """
@@ -724,27 +671,6 @@ def get_recipe_dependencies(d):
 
         resolved_deps.add(dep)
     return list(resolved_deps)
-
-def resolve_dependency_refs(depends, recipe_refs, component_recipes, ref_recipes):
-    """
-    Replace a dependency token by the bom-refs of every component its recipe
-    contributes. A recipe with several CVE_PRODUCT names yields one component
-    per name and the dependency applies to all of them.
-    """
-
-    # Recipe name
-    if depends in recipe_refs:
-        recipe = depends
-    # Component name, which may differ from the recipe name
-    elif depends in component_recipes:
-        recipe = component_recipes[depends]
-    # If depends is already a bom-ref
-    elif depends in ref_recipes:
-        recipe = ref_recipes[depends]
-    else:
-        return []
-
-    return list(recipe_refs[recipe])
 
 def redact_credentials(text):
     """
@@ -1000,138 +926,6 @@ def generate_source_references(d):
             d.setVar("BB_NO_NETWORK", no_network)
     return references
 
-def generate_packages_list(d, products_names, version):
-    """
-    Get a list of products and generate CPE and PURL identifiers for each of them.
-    """
-    import uuid
-    from oe.purl import get_base_purl
-
-    packages = []
-
-    # keep only the short version which can be matched against vulnerabilities databases
-    version = version.split("+git")[0]
-
-    # Ensure version is never empty (required by some SBOM profiles)
-    if not version or version.strip() == "":
-        version = "unknown"
-
-    references = generate_source_references(d) if d.getVar("CYCLONEDX_ADD_COMPONENT_SOURCE_REFERENCES") == "1" else None
-
-    # some packages have alternative names, so we split CVE_PRODUCT
-    # convert to set to avoid duplicates
-    for product in set(products_names.split()):
-        # CVE_PRODUCT in recipes may include vendor information for CPE identifiers. If not,
-        # use wildcard for vendor.
-        if ":" in product:
-            vendor, product = product.split(":", 1)
-        else:
-            vendor = ""
-
-        spdx_purls = (d.getVar("SPDX_PACKAGE_URLS") or "").split()
-        purl = spdx_purls[0] if spdx_purls else get_base_purl(d)
-
-        pkg = {
-            "name": product,
-            "version": version,
-            "type": "library",
-            "cpe": 'cpe:2.3:*:{}:{}:{}:*:*:*:*:*:*:*'.format(vendor or "*", product, version),
-            "purl": purl,
-            "bom-ref": str(uuid.uuid4())
-        }
-        if vendor != "":
-            pkg["group"] = vendor
-        if references:
-            pkg["externalReferences"] = references
-        packages.append(pkg)
-    return packages
-
-def normalize_cve_id(cve_id):
-    """
-    Normalize CVE ID by removing patch file suffixes.
-
-    Yocto recipes often use multiple patches for the same CVE with suffixes like:
-    - CVE-2025-52886-0001.patch
-    - CVE-2025-52886-0002.patch
-
-    This function strips the numeric suffix to get the canonical CVE ID.
-    """
-    import re
-    # Match CVE-YYYY-NNNNN format, optionally followed by -NNNN suffix
-    match = re.match(r'(CVE-\d{4}-\d+)(?:-\d+)?', cve_id)
-    if match:
-        return match.group(1)
-    return cve_id
-
-def append_to_vex(d, cve, cves, bom_ref):
-    """
-    Collect CVE status information from within open embedded recipes and append to add to cve dictionary.
-    This could be backported, patched or ignored CVEs.
-    """
-    from datetime import datetime, timezone
-
-    cve_id, abbrev_status, status, justification = cve
-
-    # Normalize CVE ID to remove patch file suffixes (e.g., CVE-2025-52886-0001 -> CVE-2025-52886)
-    normalized_cve_id = normalize_cve_id(cve_id)
-
-    # See https://docs.yoctoproject.org/singleindex.html#term-CVE_CHECK_STATUSMAP for possible statuses.
-    if abbrev_status == "Patched":
-        bb.debug(2, f"Found patch for {normalized_cve_id} in {d.getVar('BPN')}")
-        vex_state = "resolved"
-    elif abbrev_status == "Ignored":
-        bb.debug(2, f"Found ignore statement for {normalized_cve_id} in {d.getVar('BPN')}")
-        vex_state = "not_affected"
-    else:
-        bb.debug(2, f"Found unknown or irrelevant CVE status {abbrev_status} for {normalized_cve_id} in {d.getVar('BPN')}. Skipping...")
-        return
-
-    # Check if this CVE already exists in the list (avoid duplicates from multiple patches)
-    for existing_cve in cves:
-        if existing_cve["id"] == normalized_cve_id:
-            # CVE already recorded, just update the detail to mention this patch too
-            if cve_id != normalized_cve_id:  # Only if there was a suffix
-                existing_cve["analysis"]["detail"] += f"Additional patch: {cve_id}\n"
-            bb.debug(2, f"CVE {normalized_cve_id} already recorded, updated details")
-            # record additional bom reference if unique
-            if not any(existing_bom_ref["ref"].endswith(bom_ref)
-                    for existing_bom_ref in existing_cve["affects"]):
-                existing_cve["affects"].append({"ref": f"urn:cdx:{d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER')}/1#{bom_ref}"})
-            return
-
-    detail_string = ""
-    detail_string += f"STATE: {status}\n"
-    if justification:
-        detail_string += f"JUSTIFICATION: {justification}\n"
-    # Mention original patch filename if it had a suffix
-    if cve_id != normalized_cve_id:
-        detail_string += f"Patch file: {cve_id}\n"
-
-    # Build analysis object
-    analysis = {
-        "detail": detail_string
-    }
-    if vex_state:
-        analysis["state"] = vex_state
-
-    # Add timestamps when enabled
-    # This provides better tracking of when vulnerabilities were identified and updated
-    add_timestamps = d.getVar('CYCLONEDX_ADD_VULN_TIMESTAMPS') == "1"
-    if add_timestamps:
-        timestamp = datetime.now(timezone.utc).isoformat()
-        analysis["firstIssued"] = timestamp
-        analysis["lastUpdated"] = timestamp
-
-    cves.append({
-        "id": normalized_cve_id,
-        # vex documents require a valid source, see https://github.com/DependencyTrack/dependency-track/issues/2977
-        # this should always be NVD for yocto CVEs.
-        "source": {"name": "NVD", "url": f"https://nvd.nist.gov/vuln/detail/{normalized_cve_id}"},
-        "analysis": analysis,
-        "affects": [{"ref": f"urn:cdx:{d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER')}/1#{bom_ref}"}]
-    })
-    return
-
 def list_runtime_recipes(d):
     depends = (d.getVar("CYCLONEDX_EXPORT_DEPENDS") or "").split()
     if depends:
@@ -1309,18 +1103,6 @@ def list_runtime_recipes_from_depends(d, depends):
             runtime_recipes.add(recipe)
     return runtime_recipes
 
-def highest_priority_scope(*scopes):
-    """
-    Return the most significant of the given CycloneDX scopes, ordered
-    required > optional > excluded. Unknown or missing values are ignored,
-    and None is returned when no scope is known.
-    """
-    priority = ["required", "optional", "excluded"]
-    known = [scope for scope in scopes if scope in priority]
-    if not known:
-        return None
-    return min(known, key=priority.index)
-
 def resolve_extra_image_sbom_paths(d):
     import os
 
@@ -1366,87 +1148,19 @@ def write_cyclonedx_image_data(d, sbom, vex):
 
 def export_cyclonedx(d):
     """
-    Select CVE and package information and runtime packages and output them
-    into a single export file.
+    Collect normalized build facts and artifact facts, hand them to the
+    renderer and deploy the SBOM and VEX documents it returns.
     """
-    import uuid
-    from datetime import datetime, timezone
     import os
     from pathlib import Path
-    import copy
+    from datetime import datetime, timezone
 
     timestamp = datetime.now(timezone.utc).isoformat()
 
-    image_type = d.getVar("CYCLONEDX_IMAGE_TYPE") or "firmware"
-    image_name = d.getVar("CYCLONEDX_IMAGE_NAME") or d.getVar("PN") or "image"
-    image_version = d.getVar("CYCLONEDX_IMAGE_VERSION") or "unknown"
-    metadata_component_ref = str(uuid.uuid4())
-
-    # Generate unique serial numbers for sbom and vex document
-    sbom_serial_number = str(uuid.uuid4())
-    vex_serial_number = str(uuid.uuid4())
-
-    # Get configured spec version
-    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION')
-
-    # Generate sbom document header
-    bb.debug(2, f"Creating empty temporary sbom file with serial number {sbom_serial_number}")
-    sbom_metadata = {
-        "timestamp": timestamp,
-        "tools": create_tools_metadata(d)
-    }
-    sbom_metadata["component"] = {
-        "type": image_type,
-        "name": image_name,
-        "version": image_version,
-        "bom-ref": metadata_component_ref
-    }
-    if d.getVar("CYCLONEDX_ADD_LAYER_REFERENCES") == "1":
-        sbom_metadata["component"]["externalReferences"] = generate_layer_references(d)
-
-    sbom = {
-        "bomFormat": "CycloneDX",
-        "specVersion": spec_version,
-        "serialNumber": f"urn:uuid:{sbom_serial_number}",
-        "version": 1,
-        "metadata": sbom_metadata,
-        "components": [],
-        "dependencies": []
-    }
-
-    # 1.7-only additions: root-level citations and TLP marking. Applied to
-    # the whole document, as citations are not part of metadata.
-    add_document_extensions(d, sbom)
-
-    # Lifecycles are supported since CycloneDX 1.5.
-    sbom["metadata"]["lifecycles"] = [
-        {"phase": "build"}
-    ]
-
-    # Generate vex document header
-    bb.debug(2, f"Creating empty temporary vex file with serial number {sbom_serial_number}")
-    vex_metadata = {
-        "timestamp": timestamp,
-        "tools": create_tools_metadata(d)
-    }
-    vex = {
-        "bomFormat": "CycloneDX",
-        "specVersion": spec_version,
-        "serialNumber": f"urn:uuid:{vex_serial_number}",
-        "version": 1,
-        "metadata": vex_metadata,
-        "vulnerabilities": []
-    }
-
-    # 1.7-only additions, applied at the document root (citations) and in
-    # metadata.distributionConstraints (TLP).
-    add_document_extensions(d, vex)
 
     # taken from https://github.com/yoctoproject/poky/blob/fec201518be3c35a9359ec8c37675a33e458b92d/meta/classes/cve-check.bbclass
     # SPDX-License-Identifier: MIT
     # SPDX-FileCopyrightText: Copyright OpenEmbedded Contributors
-    # Collect sbom data from runtime packages
-
     # Determine runtime packages for scope assignment
     runtime_recipes = list_runtime_recipes(d)
 
@@ -1476,26 +1190,15 @@ def export_cyclonedx(d):
         extra_recipes.add(recipe)
     recipes = recipes.union(extra_recipes)
 
-    # Treat extra runtime recipes as direct image-install intent.
-    image_install_recipes = image_install_recipes.union(extra_recipes)
+    # Extra runtime recipes are runtime content and direct image-install intent.
+    runtime_recipes = set(runtime_recipes) | extra_recipes
+    image_install_recipes = set(image_install_recipes).union(extra_recipes)
 
-    # Track direct-install components without persisting debug properties in output.
-    directly_installed_component_refs = set()
-
-    # Maps used to turn a dependency token into the components of its recipe
-    recipe_refs = {}
-    component_recipes = {}
-    ref_recipes = {}
-    # Global deduplication map that tracks all duplicate bom-refs across all recipes
-    global_bom_ref_dedup_map = {}
-
-    image_recipe_names = set()
-    pn_lists = {}
+    # Load the per-recipe facts written by do_populate_cyclonedx. They are
+    # plain JSON fragments; the renderer never sees the data store.
+    fragments = {}
     pkgarchs = d.getVar("SSTATE_ARCHS").split()
     pkgarchs.reverse()
-    # first loop to fill the dictionary
-    # Iterate in a stable order: `recipes` is a set, and the loops below resolve
-    # collisions on a first-one-wins basis.
     for pkg in sorted(recipes):
         for pkgarch in pkgarchs:
             pn_list_filepath = os.path.join(d.getVar("CYCLONEDX_PNDATA"),
@@ -1505,173 +1208,27 @@ def export_cyclonedx(d):
         if not os.path.exists(pn_list_filepath):
             bb.error(f"CycloneDX PN file not found: {pkg}.json")
             continue
-        pn_lists[pkg] = read_json(pn_list_filepath)
-        pn_list = copy.deepcopy(pn_lists[pkg])
+        fragments[pkg] = read_json(pn_list_filepath)
 
-        image_recipe_names.add(pkg)
-        # Merge recipe-level deduplication map into global map
-        if "bom_ref_dedup_map" in pn_list:
-            global_bom_ref_dedup_map.update(pn_list["bom_ref_dedup_map"])
-
-        for pn_pkg in pn_list["pkgs"]:
-            # A recipe contributes one component per CVE_PRODUCT name; index them
-            # all so a dependency on the recipe reaches every alias component.
-            recipe_refs.setdefault(pkg, []).append(pn_pkg["bom-ref"])
-            component_recipes.setdefault(pn_pkg["name"], pkg)
-            ref_recipes[pn_pkg["bom-ref"]] = pkg
-
-    for pkg in sorted(pn_lists):
-        pn_list = copy.deepcopy(pn_lists[pkg])
-
-        for pn_pkg in pn_list["pkgs"]:
-            # Avoid multiple pkgs referencing the same cpe
-            existing_component = next((sbom_pkg for sbom_pkg in sbom["components"]
-                                       if sbom_pkg["cpe"] == pn_pkg["cpe"]), None)
-            if existing_component:
-                if pkg in image_install_recipes:
-                    existing_ref = existing_component.get("bom-ref")
-                    if existing_ref:
-                        directly_installed_component_refs.add(existing_ref)
-                # Redirect references to the component that was dropped as a duplicate.
-                if existing_component.get("bom-ref"):
-                    global_bom_ref_dedup_map[pn_pkg["bom-ref"]] = existing_component["bom-ref"]
-                continue
-
-            # Add scope field to indicate runtime vs build-time component
-            # Can be disabled for certain SBOM profiles or tool compatibility
-            if d.getVar('CYCLONEDX_ADD_COMPONENT_SCOPES') == "1":
-                pn_pkg["scope"] = "required" if pkg in runtime_recipes or pkg in extra_recipes else "excluded"
-
-            if pkg in image_install_recipes:
-                directly_installed_component_refs.add(pn_pkg["bom-ref"])
-
-            sbom["components"].append(pn_pkg)
-        for pn_cve in pn_list["cves"]:
-            # Don't replace serial number yet - it will be done after all CVEs are collected
-            # This fixes multi-output builds where shared components would get the wrong serial
-            vex["vulnerabilities"].append(pn_cve)
-
-    # Sort components by name for a stable, human-readable order.
-    # "recipes" is a set, so insertion order above is non-deterministic across builds.
-    sbom["components"].sort(key=lambda c: (c["name"], c["version"]))
-
-    # Add dependencies.
-    # Runtime edges derived from pkgdata cover RRECOMMENDS, per-package RDEPENDS
-    # and generated shlib dependencies, which the recipe metadata alone misses.
+    # Runtime edges derived from pkgdata cover RRECOMMENDS, per-package
+    # RDEPENDS and generated shlib dependencies, which the recipe metadata
+    # alone misses. With configured export dependencies the caller has
+    # resolved them instead.
     runtime_edges = {}
     if not (d.getVar("CYCLONEDX_EXPORT_DEPENDS") or "").split():
         runtime_edges = build_runtime_dependency_edges(d)
 
-    for pkg in sorted(pn_lists):
-        pn_list = copy.deepcopy(pn_lists[pkg])
+    primary = {
+        "type": d.getVar("CYCLONEDX_IMAGE_TYPE") or "firmware",
+        "name": d.getVar("CYCLONEDX_IMAGE_NAME") or d.getVar("PN") or "image",
+        "version": d.getVar("CYCLONEDX_IMAGE_VERSION") or "unknown",
+    }
+    if d.getVar("CYCLONEDX_ADD_LAYER_REFERENCES") == "1":
+        primary["external_references"] = generate_layer_references(d)
 
-        deps = pn_list.get("dependencies")
-        extra_depends = sorted(runtime_edges.get(pkg, ()))
-        if not deps:
-            if not extra_depends:
-                continue
-            deps = [{"ref": pn_pkg["bom-ref"], "dependsOn": []}
-                    for pn_pkg in pn_list["pkgs"] if pn_pkg.get("bom-ref")]
-
-        for dep_entry in deps:
-            component_ref = dep_entry["ref"]
-            if component_ref in global_bom_ref_dedup_map:
-                component_ref = global_bom_ref_dedup_map[component_ref]
-
-            # Skip if component doesn't exist in SBOM
-            if not any(comp["bom-ref"] == component_ref for comp in sbom["components"]):
-                continue
-
-            resolved_depends = []
-
-            for depends in list(dep_entry["dependsOn"]) + extra_depends:
-                if depends not in image_recipe_names:
-                    bb.debug(2, f"Skipping dependency {depends} - not in this image")
-                    continue
-
-                resolved_refs = resolve_dependency_refs(depends, recipe_refs,
-                                                        component_recipes, ref_recipes)
-
-                for resolved_ref in resolved_refs:
-                    if resolved_ref in global_bom_ref_dedup_map:
-                        resolved_ref = global_bom_ref_dedup_map[resolved_ref]
-
-                    if resolved_ref == component_ref:
-                        continue
-
-                    # Verify that the component exists in the SBOM
-                    # If it was filtered out by CPE deduplication, skip this dependency entry
-                    if not any(comp["bom-ref"] == resolved_ref for comp in sbom["components"]):
-                        continue
-
-                    if resolved_ref not in resolved_depends:
-                        resolved_depends.append(resolved_ref)
-
-            if resolved_depends:
-                # Recipes sharing a CPE collapse onto one component, so merge
-                # instead of emitting a second node for the same bom-ref.
-                existing_entry = next((entry for entry in sbom["dependencies"]
-                                       if entry["ref"] == component_ref), None)
-                if existing_entry:
-                    existing_entry["dependsOn"].extend(
-                        ref for ref in resolved_depends if ref not in existing_entry["dependsOn"])
-                else:
-                    sbom["dependencies"].append({"ref": component_ref, "dependsOn": resolved_depends})
-
-    # Fold in pre-resolved CycloneDX fragments contributed by recipes.
-    #
-    # Language ecosystems that resolve their own dependency trees (cargo, npm,
-    # go, ...) are invisible to Yocto's package model: the image BOM lists the
-    # recipe that builds the binary, but not the hundreds of modules linked into
-    # it. Such a recipe can generate a CycloneDX document at build time and
-    # attach it to its own pn fragment under "extra_components" /
-    # "extra_dependencies", and it is merged into the image BOM here.
-    #
-    # These entries already carry their own bom-refs, purls and dependency
-    # edges, so they are appended verbatim: the CPE deduplication and the
-    # recipe-name dependency remapping above apply to components derived from
-    # Yocto packages and would corrupt an externally resolved tree.
-    extra_seen_refs = {c["bom-ref"] for c in sbom["components"] if c.get("bom-ref")}
-    for pkg in sorted(recipes):
-        pn_list = pn_lists.get(pkg)
-        if not pn_list:
-            continue
-        for component in pn_list.get("extra_components", []):
-            ref = component.get("bom-ref") or component.get("purl")
-            if ref:
-                if ref in extra_seen_refs:
-                    continue
-                extra_seen_refs.add(ref)
-            sbom["components"].append(component)
-        for dep_entry in pn_list.get("extra_dependencies", []):
-            if dep_entry not in sbom["dependencies"]:
-                sbom["dependencies"].append(dep_entry)
-
-        # Attach each contributed tree to the recipe that produced it, so the
-        # modules are attributable to the binary they are linked into instead of
-        # floating unreferenced at the top level of the BOM.
-        extra_roots = pn_list.get("extra_roots") or []
-        if not extra_roots:
-            continue
-        owner_refs = recipe_refs.get(pkg) or []
-        owner_ref = owner_refs[0] if owner_refs else None
-        if owner_ref in global_bom_ref_dedup_map:
-            owner_ref = global_bom_ref_dedup_map[owner_ref]
-        if not owner_ref or not any(c.get("bom-ref") == owner_ref for c in sbom["components"]):
-            bb.debug(1, f"CYCLONEDX_EXTRA_BOM_FILES: {pkg}: no component to attach "
-                        f"{len(extra_roots)} contributed tree(s) to")
-            continue
-        owner_entry = next((x for x in sbom["dependencies"] if x["ref"] == owner_ref), None)
-        if owner_entry is None:
-            owner_entry = {"ref": owner_ref, "dependsOn": []}
-            sbom["dependencies"].append(owner_entry)
-        for root_ref in extra_roots:
-            if root_ref in extra_seen_refs and root_ref not in owner_entry["dependsOn"]:
-                owner_entry["dependsOn"].append(root_ref)
-
-    # Fold in complete SBOMs from other images listed in CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES.
-    # Components shared by CPE are deduplicated (parent wins); unique components are added with scope "required".
-    extra_seen_image_refs = {c["bom-ref"] for c in sbom["components"] if c.get("bom-ref")}
+    # The completed documents of embedded images are build artifacts; read
+    # them here and hand the renderer their contents only.
+    included_images = []
     for img_name, img_sbom_path, img_vex_path in resolve_extra_image_sbom_paths(d):
         if not os.path.exists(img_sbom_path):
             bb.warn(f"CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES: SBOM not found for {img_name}: {img_sbom_path}")
@@ -1681,190 +1238,36 @@ def export_cyclonedx(d):
         except Exception as e:
             bb.warn(f"CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES: cannot parse SBOM for {img_name}: {e}")
             continue
+        img_vex_data = None
+        img_vex_error = None
+        if os.path.exists(img_vex_path):
+            try:
+                img_vex_data = read_json(img_vex_path)
+            except Exception as e:
+                img_vex_error = str(e)
+        included_images.append({"name": img_name, "sbom": img_sbom_data,
+                                "vex": img_vex_data, "vex_error": img_vex_error})
 
-        img_spec = img_sbom_data.get("specVersion")
-        if img_spec and img_spec != spec_version:
-            bb.warn(f"CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES: {img_name} specVersion {img_spec} "
-                    f"differs from parent {spec_version}; merging anyway")
-
-        # The UUID portion of the included SBOM's serialNumber appears verbatim in its VEX affects refs.
-        included_serial = remove_prefix(img_sbom_data.get("serialNumber") or "", "urn:uuid:")
-
-        # Map included bom-refs to parent bom-refs for components that share the same CPE.
-        included_bom_ref_remap = {}
-        for inc_comp in img_sbom_data.get("components") or []:
-            inc_cpe = inc_comp.get("cpe")
-            inc_ref = inc_comp.get("bom-ref")
-            if not inc_ref or not inc_cpe:
-                continue
-            existing = next(
-                (c for c in sbom["components"] if c.get("cpe") == inc_cpe), None
-            )
-            if existing:
-                included_bom_ref_remap[inc_ref] = existing["bom-ref"]
-                if d.getVar("CYCLONEDX_ADD_COMPONENT_SCOPES") == "1":
-                    merged_scope = highest_priority_scope(existing.get("scope"), inc_comp.get("scope"))
-                    if merged_scope:
-                        existing["scope"] = merged_scope
-
-        # Add components unique to the included image (no CPE match in the parent SBOM).
-        for inc_comp in img_sbom_data.get("components") or []:
-            inc_ref = inc_comp.get("bom-ref")
-            if inc_ref and inc_ref in included_bom_ref_remap:
-                continue
-            if inc_ref and inc_ref in extra_seen_image_refs:
-                continue
-            if d.getVar("CYCLONEDX_ADD_COMPONENT_SCOPES") == "1" and "scope" not in inc_comp:
-                inc_comp = dict(inc_comp)
-                inc_comp["scope"] = "required"
-            sbom["components"].append(inc_comp)
-            if inc_ref:
-                extra_seen_image_refs.add(inc_ref)
-
-        # Represent the included image itself as a firmware component in the parent SBOM.
-        inc_metadata_comp = (img_sbom_data.get("metadata") or {}).get("component") or {}
-        img_firmware_ref = str(uuid.uuid4())
-        img_firmware_comp = {
-            "type": "firmware",
-            "name": img_name,
-            "version": inc_metadata_comp.get("version") or "unknown",
-            "bom-ref": img_firmware_ref,
-        }
-        if d.getVar("CYCLONEDX_ADD_COMPONENT_SCOPES") == "1":
-            img_firmware_comp["scope"] = "required"
-        sbom["components"].append(img_firmware_comp)
-        extra_seen_image_refs.add(img_firmware_ref)
-        # The embedded image is a direct child of the parent image in the dependency tree.
-        directly_installed_component_refs.add(img_firmware_ref)
-
-        inc_metadata_ref = inc_metadata_comp.get("bom-ref")
-        if inc_metadata_ref:
-            included_bom_ref_remap[inc_metadata_ref] = img_firmware_ref
-
-        def remap_ref(ref, _remap=included_bom_ref_remap):
-            return _remap.get(ref, ref)
-
-        # Add dependency edges from the included SBOM, remapping shared bom-refs.
-        # Merge into an existing dep entry when the ref is already present in the parent.
-        for dep_entry in img_sbom_data.get("dependencies") or []:
-            r_ref = remap_ref(dep_entry.get("ref", ""))
-            if not r_ref or not any(c.get("bom-ref") == r_ref for c in sbom["components"]):
-                continue
-            r_depends = []
-            for dr in dep_entry.get("dependsOn") or []:
-                rdr = remap_ref(dr)
-                if rdr == r_ref:
-                    continue
-                if not any(c.get("bom-ref") == rdr for c in sbom["components"]):
-                    continue
-                if rdr not in r_depends:
-                    r_depends.append(rdr)
-            if not r_depends:
-                continue
-            existing_entry = next((x for x in sbom["dependencies"] if x["ref"] == r_ref), None)
-            if existing_entry:
-                for rdr in r_depends:
-                    if rdr not in existing_entry["dependsOn"]:
-                        existing_entry["dependsOn"].append(rdr)
-            else:
-                sbom["dependencies"].append({"ref": r_ref, "dependsOn": r_depends})
-
-        bb.debug(1, f"CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES: merged {img_name} "
-                    f"({len(img_sbom_data.get('components') or [])} components)")
-
-        # Merge VEX vulnerabilities: remap included SBOM serial and shared bom-refs, avoid CVE ID duplicates.
-        if not os.path.exists(img_vex_path):
-            bb.debug(1, f"CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES: no VEX for {img_name}: {img_vex_path}")
-            continue
-        try:
-            img_vex_data = read_json(img_vex_path)
-        except Exception as e:
-            bb.warn(f"CYCLONEDX_EXTRA_RUNTIME_IMAGE_RECIPES: cannot parse VEX for {img_name}: {e}")
-            continue
-
-        for inc_vuln in img_vex_data.get("vulnerabilities") or []:
-            cve_id = inc_vuln.get("id")
-            if not cve_id:
-                continue
-            remapped_affects = []
-            for affect in inc_vuln.get("affects") or []:
-                ref = affect.get("ref", "")
-                if included_serial and included_serial in ref:
-                    ref = ref.replace(included_serial, sbom_serial_number)
-                if "#" in ref:
-                    prefix, bom_ref_part = ref.rsplit("#", 1)
-                    ref = f"{prefix}#{remap_ref(bom_ref_part)}"
-                bom_ref_in_ref = ref.rsplit("#", 1)[-1] if "#" in ref else ""
-                if bom_ref_in_ref and not any(
-                    c.get("bom-ref") == bom_ref_in_ref for c in sbom["components"]
-                ):
-                    continue
-                remapped_affects.append({"ref": ref})
-            if not remapped_affects:
-                continue
-            existing_vuln = next(
-                (v for v in vex["vulnerabilities"] if v.get("id") == cve_id), None
-            )
-            if existing_vuln:
-                for a in remapped_affects:
-                    if a not in existing_vuln["affects"]:
-                        existing_vuln["affects"].append(a)
-            else:
-                merged_vuln = dict(inc_vuln)
-                merged_vuln["affects"] = remapped_affects
-                vex["vulnerabilities"].append(merged_vuln)
-
-    # Add a root dependency node as the first entry.
-    # It references metadata.component and points to all directly installed components.
-    directly_installed_refs = sorted(directly_installed_component_refs)
-
-    root_dep_entry = {
-        "ref": metadata_component_ref,
-        "dependsOn": directly_installed_refs
-    }
-    sbom["dependencies"].insert(0, root_dep_entry)
-
-    # Replace SBOM serial placeholder in VEX vulnerabilities
-    # This must be done after all vulnerabilities are collected to ensure each image
-    # gets its own SBOM serial number in multi-output builds (e.g., rootfs + initramfs)
-    sbom_refs = {comp["bom-ref"] for comp in sbom["components"]}
-    serial_placeholder = d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER')
-    resolved_vulns = []
-    covered_refs = {}
-    for vuln in vex["vulnerabilities"]:
-        affects = []
-        for affect in vuln.get("affects", []):
-            if "ref" not in affect:
-                affects.append(affect)
-                continue
-
-            prefix, _, bom_ref = affect["ref"].rpartition("#")
-            bom_ref = global_bom_ref_dedup_map.get(bom_ref, bom_ref)
-            # A component dropped by CPE deduplication is covered by its duplicate.
-            if bom_ref not in sbom_refs:
-                continue
-
-            # Refs merged from another image only become comparable to this
-            # document's own, still-templated refs once the serial is substituted.
-            ref = f"{prefix}#{bom_ref}".replace(serial_placeholder, sbom_serial_number)
-            if not any(existing.get("ref") == ref for existing in affects):
-                affects.append({**affect, "ref": ref})
-
-        if not affects:
-            continue
-
-        # Recipes sharing a CPE report the same CVE, so keep only the first statement.
-        refs = {affect["ref"] for affect in affects if "ref" in affect}
-        if refs and refs.issubset(covered_refs.get(vuln["id"], set())):
-            continue
-        covered_refs.setdefault(vuln["id"], set()).update(refs)
-
-        vuln["affects"] = affects
-        resolved_vulns.append(vuln)
-    vex["vulnerabilities"] = resolved_vulns
-
-    # Sort vulnerabilities by CVE id for a stable, human-readable order.
-    vex["vulnerabilities"].sort(key=lambda v: v["id"])
+    docs = _cyclonedx_renderer(d).render({
+        "config": {
+            "spec_version": d.getVar('CYCLONEDX_SPEC_VERSION'),
+            "add_component_scopes": d.getVar('CYCLONEDX_ADD_COMPONENT_SCOPES') == "1",
+            "add_citation": d.getVar('CYCLONEDX_ADD_CITATION') == "1",
+            "tlp_marking": d.getVar('CYCLONEDX_TLP_MARKING'),
+            "add_vuln_timestamps": d.getVar('CYCLONEDX_ADD_VULN_TIMESTAMPS') == "1",
+            "sbom_serial_placeholder": d.getVar('CYCLONEDX_SBOM_SERIAL_PLACEHOLDER'),
+        },
+        "timestamp": timestamp,
+        "log": _cyclonedx_log,
+        "primary": primary,
+        "fragments": fragments,
+        "runtime_recipes": sorted(runtime_recipes),
+        "image_install_recipes": sorted(image_install_recipes),
+        "runtime_edges": {pkg: sorted(deps) for pkg, deps in runtime_edges.items()},
+        "included_images": included_images,
+    })
+    sbom = docs["sbom"]
+    vex = docs["vex"]
 
     export_dir = d.getVar("CYCLONEDX_EXPORT_DIR")
     tmp_export_dir = d.getVar("CYCLONEDX_TMP_EXPORT_DIR")
@@ -1956,32 +1359,8 @@ python () {
 def cyclonedx_sbom_cve_check_enabled(d):
     return bb.data.inherits_class("image", d) and bb.data.inherits_class("sbom-cve-check", d)
 
-def cyclonedx_sbom_cve_check_analysis(d, issue):
-    status = issue.get("status")
-    detail = issue.get("detail", "")
-    kind = detail.split(":", 1)[0]
-
-    if status == "Patched":
-        analysis = {"state": "not_affected" if kind == "version-not-in-range" else "resolved"}
-    elif status == "Ignored":
-        analysis = {"state": "not_affected"}
-        if kind == "not-applicable-config":
-            analysis["justification"] = "code_not_present"
-    elif status == "Unpatched" and d.getVar("CYCLONEDX_INCLUDE_UNPATCHED_VULNS") == "1":
-        analysis = {}
-        if d.getVar("CYCLONEDX_UNPATCHED_VULNS_STATE"):
-            analysis["state"] = d.getVar("CYCLONEDX_UNPATCHED_VULNS_STATE")
-    else:
-        return None
-
-    analysis["detail"] = f"STATE: {detail}\n"
-    if issue.get("description"):
-        analysis["detail"] += f"JUSTIFICATION: {issue['description']}\n"
-    return analysis
 
 python do_cyclonedx_sbom_cve_check() {
-    from datetime import datetime, timezone
-
     imagedata_dir = os.path.join(d.getVar("CYCLONEDX_IMAGEDATA"), d.getVar("SSTATE_PKGARCH"), d.getVar("PN"))
     sbom = read_json(os.path.join(imagedata_dir, "bom.json"))
     vex = read_json(os.path.join(imagedata_dir, "vex.json"))
@@ -1991,55 +1370,13 @@ python do_cyclonedx_sbom_cve_check() {
     image_link_name = d.getVar("IMAGE_LINK_NAME") or d.getVar("IMAGE_NAME")
     report = read_json(os.path.join(d.getVar("DEPLOY_DIR_IMAGE"), image_link_name + report_ext))
 
-    ref_prefix = f"urn:cdx:{sbom['serialNumber'].split(':')[-1]}/{sbom.get('version', 1)}#"
-    refs_by_cpe = {}
-    refs_by_pn = {}
-    for component in sbom.get("components", []):
-        if component.get("cpe"):
-            refs_by_cpe.setdefault(component["cpe"], []).append(component["bom-ref"])
-        purl = component.get("purl", "")
-        if purl.startswith("pkg:yocto/"):
-            refs_by_pn.setdefault(purl.split("/")[-1].split("@")[0], []).append(component["bom-ref"])
-
-    covered = {(v["id"], a["ref"]) for v in vex.get("vulnerabilities", []) for a in v.get("affects", [])}
-
-    timestamp = None
-    if d.getVar("CYCLONEDX_SPEC_VERSION") in ["1.6", "1.7"] and d.getVar("CYCLONEDX_ADD_VULN_TIMESTAMPS") == "1":
-        timestamp = datetime.now(timezone.utc).isoformat()
-
-    statements = {}
-    for package in report.get("package", []):
-        refs = []
-        for cpe in package.get("cpes", []):
-            refs += refs_by_cpe.get(cpe, [])
-        if not refs:
-            refs = refs_by_pn.get(package["name"], [])
-        if not refs:
-            bb.debug(1, f"No SBOM component for sbom-cve-check results of {package['name']}")
-            continue
-
-        for issue in package.get("issue", []):
-            analysis = cyclonedx_sbom_cve_check_analysis(d, issue)
-            if analysis is None:
-                continue
-            affects = [ref_prefix + r for r in sorted(set(refs)) if (issue["id"], ref_prefix + r) not in covered]
-            if not affects:
-                continue
-            covered.update((issue["id"], a) for a in affects)
-            if timestamp:
-                analysis["firstIssued"] = timestamp
-                analysis["lastUpdated"] = timestamp
-            key = (issue["id"], analysis["detail"], analysis.get("state"))
-            statement = statements.setdefault(key, {
-                "id": issue["id"],
-                "source": {"name": "NVD", "url": f"https://nvd.nist.gov/vuln/detail/{issue['id']}"},
-                "analysis": analysis,
-                "affects": [],
-            })
-            statement["affects"] += [{"ref": a} for a in affects]
-
-    vex.setdefault("vulnerabilities", []).extend(statements[k] for k in sorted(statements))
-    bb.note(f"Added {len(statements)} sbom-cve-check statements to the CycloneDX VEX")
+    added = _cyclonedx_renderer(d).merge_sbom_cve_check(sbom, vex, report, {
+        "spec_version": d.getVar("CYCLONEDX_SPEC_VERSION"),
+        "add_vuln_timestamps": d.getVar("CYCLONEDX_ADD_VULN_TIMESTAMPS") == "1",
+        "include_unpatched_vulns": d.getVar("CYCLONEDX_INCLUDE_UNPATCHED_VULNS") == "1",
+        "unpatched_vulns_state": d.getVar("CYCLONEDX_UNPATCHED_VULNS_STATE"),
+    }, log=_cyclonedx_log)
+    bb.note(f"Added {added} sbom-cve-check statements to the CycloneDX VEX")
 
     deploy_dir = d.getVar("CYCLONEDX_SBOM_CVE_CHECK_DEPLOYDIR")
     export_vex = os.path.join(deploy_dir, d.getVar("CYCLONEDX_EXPORT_SBOM_CVE_CHECK_VEX"))
@@ -2063,7 +1400,14 @@ SSTATETASKS += "do_cyclonedx_sbom_cve_check"
 do_cyclonedx_sbom_cve_check[cleandirs] = "${CYCLONEDX_SBOM_CVE_CHECK_DEPLOYDIR} ${CYCLONEDX_SBOM_CVE_CHECK_IMAGEDATA_WORKDIR}"
 do_cyclonedx_sbom_cve_check[sstate-inputdirs] = "${CYCLONEDX_SBOM_CVE_CHECK_DEPLOYDIR} ${CYCLONEDX_SBOM_CVE_CHECK_IMAGEDATA_WORKDIR}"
 do_cyclonedx_sbom_cve_check[sstate-outputdirs] = "${CYCLONEDX_EXPORT_DIR} ${CYCLONEDX_IMAGEDATA}/${SSTATE_PKGARCH}/${PN}/sbom-cve-check"
-do_cyclonedx_sbom_cve_check[vardeps] += "cyclonedx_sbom_cve_check_analysis"
+# The renderer module produces the documents; keep its contents in the
+# task signatures of every task that executes it. BitBake encodes
+# file-checksums entries as `path:exists` (cf. oe-core's SPDX3_DEP_FILES);
+# the module is tracked in the layer, so it exists in every build.
+do_populate_cyclonedx[file-checksums] += "${CYCLONEDX_LAYERDIR}/lib/meta_cyclonedx.py:True"
+do_rootfs[file-checksums] += "${CYCLONEDX_LAYERDIR}/lib/meta_cyclonedx.py:True"
+do_deploy_cyclonedx[file-checksums] += "${CYCLONEDX_LAYERDIR}/lib/meta_cyclonedx.py:True"
+do_cyclonedx_sbom_cve_check[file-checksums] += "${CYCLONEDX_LAYERDIR}/lib/meta_cyclonedx.py:True"
 python do_cyclonedx_sbom_cve_check_setscene() {
     sstate_setscene(d)
 }

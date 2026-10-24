@@ -731,9 +731,21 @@ Thanks for your interest in contributing to `meta-cyclonedx`!
 Please read the dedicated [./CONTRIBUTING.md](CONTRIBUTING.md) file before
 opening issues or pull requests.
 
-Run the default unit suite with `python3 -m pytest`. Maintainers can run
-the kas acceptance matrix with `pytest -m integration`; prerequisites and
-the deployed-artifact checks are described in [docs/testing.md](docs/testing.md).
+### Development
+
+SBOM and VEX document semantics live in the layer's `lib/meta_cyclonedx.py`
+renderer module, which consumes normalized build and artifact facts; the
+`cyclonedx-export` class is a BitBake adapter that collects those facts and
+deploys the documents. The renderer is importable without a Yocto build and
+is covered by a behavioral test suite:
+
+```sh
+python3 -m pytest tests/
+```
+
+Maintainers can run the kas acceptance matrix with `pytest -m integration`;
+prerequisites and the deployed-artifact checks are described in
+[docs/testing.md](docs/testing.md).
 
 ## Known Limitations
 

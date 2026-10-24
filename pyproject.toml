@@ -2,6 +2,7 @@
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 addopts = ["-m", "not integration"]
 markers = [
     "integration: real BitBake acceptance build driven by kas; deselected by default, select with `pytest -m integration`",

@@ -127,3 +127,46 @@ def test_ambiguous_or_missing_anchor_is_a_hard_error(tmp_path):
 def test_runtime_env_rejects_whitespace():
     with pytest.raises(ValueError):
         kas_env.runtime_env_args({"CORE_IMAGE_EXTRA_INSTALL": "package one"})
+
+
+def test_signature_source_matches_the_branch_generation_logic():
+    # The parameter must name the file the generation tasks actually
+    # checksum: post-seam the renderer module, which the class folds in
+    # via [file-checksums]; pre-seam the export class, whose generator
+    # function is a codependency of those tasks.
+    renderer = kas_env.REPO_ROOT / "lib" / "meta_cyclonedx.py"
+    klass = kas_env.REPO_ROOT / "classes" / "cyclonedx-export.bbclass"
+    if renderer.exists():
+        assert kas_env.SIGNATURE_SOURCE == renderer
+        assert kas_env.SIGNATURE_MUTATION_ANCHOR is None, (
+            "a whole-file-checksummed target takes the append mutation"
+        )
+        klass_text = klass.read_text()
+        wired = {
+            line.split("[", 1)[0]: line
+            for line in klass_text.splitlines()
+            if "[file-checksums]" in line and "meta_cyclonedx.py" in line
+        }
+        for task in (
+            "do_populate_cyclonedx",
+            "do_rootfs",
+            "do_deploy_cyclonedx",
+            "do_cyclonedx_sbom_cve_check",
+        ):
+            assert task in wired, (
+                f"{task} must checksum the renderer module: dropping the "
+                "wiring would silently serve stale documents from sstate"
+            )
+            # BitBake >= 6.1 parses entries as `path:exists`; a raw path
+            # crashes prep_taskhash with an IndexError. Only a real build
+            # shows this, so the encoding is pinned here. The module is tracked in
+            # the layer, so the honest flag is True.
+            assert wired[task].rstrip().endswith("meta_cyclonedx.py:True\""), (
+                f"{task}'s renderer entry lacks BitBake's path:exists "
+                "encoding and would crash task-hash preparation"
+            )
+    else:
+        assert kas_env.SIGNATURE_SOURCE == klass
+        anchor = kas_env.SIGNATURE_MUTATION_ANCHOR
+        occurrences = klass.read_text().count(anchor + "\n")
+        assert occurrences == 1, "the mutation anchor must match exactly once"

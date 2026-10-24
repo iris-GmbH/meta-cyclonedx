@@ -1,5 +1,5 @@
 .vscode
 .integration/
-__pycache__/
 *.pyc
 .pytest_cache/
+**/*__pycache__
