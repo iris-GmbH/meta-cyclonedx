@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: MIT
+#
+# Acceptance tier: the kas-driven R1-R5 matrix on maintainer-provided,
+# self-managed ephemeral runners. Merge-first by design — GitHub's
+# security guidance for public repositories forbids feeding
+# fork-contributor code to self-hosted machines, so this workflow has
+# NO pull_request trigger anywhere (see docs/adr/0012).
+#
+# The workflow is present but inert until the repository registers its
+# runners and sets the ACCEPTANCE_RUNNER_LABELS repository variable to a
+# JSON array of runner labels, e.g.
+#   ["self-hosted", "Linux", "X64", "meta-cyclonedx"]
+# Unset means: runs appear with the job skipped, never queued. The
+# runner Pod *is* the runner image (ghcr.io/<this repository>/kas-runner,
+# built by runner-image.yml), so the job needs no container step and no
+# privileged anything: pytest execs the image-installed kas directly via
+# KAS_CONTAINER_ENGINE=none (direct mode; harness contract in
+# tests/integration/kas_env.py).
+#
+# This file is byte-identical between the fork and upstream; merge it as
+# an identical blob (see docs/adr/0012 and docs/testing.md).
+
+name: acceptance
+
+on:
+  push:
+    branches: [main, blacksail, wrynose, scarthgap]
+    paths:
+      - classes/**
+      - lib/**
+      - tests/**
+      - kas.yml
+      - conf/**
+  schedule:
+    # Nightly re-establishment of the acceptance claim for the default
+    # branch; GitHub honors schedules from the default branch only.
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Ref to run the matrix against (branch, tag, or SHA)
+        required: false
+
+concurrency:
+  group: acceptance-${{ github.ref }}
+  # Supersede default-branch runs; never cancel a dispatched probe.
+  cancel-in-progress: ${{ github.ref_name == github.event.repository.default_branch }}
+
+jobs:
+  acceptance:
+    name: R1-R5 acceptance matrix
+    # Inert until the repository opts in via its runner configuration.
+    if: ${{ vars.ACCEPTANCE_RUNNER_LABELS != '' }}
+    runs-on: ${{ fromJSON(vars.ACCEPTANCE_RUNNER_LABELS) }}
+    timeout-minutes: 480
+    env:
+      KAS_CONTAINER_ENGINE: none
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          submodules: true
+          fetch-depth: 0
+      - name: Run the R1-R5 acceptance matrix
+        # Explicit bash shell: -eo pipefail, so a red matrix is red even
+        # through the tee into the build log.
+        shell: bash
+        run: >-
+          python3 -m pytest -m integration --junitxml=comparison-summary.xml
+          2>&1 | tee kas-build.log
+      - name: Upload the deployed SBOM and VEX documents
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: deployed-documents
+          path: |
+            .integration/build/tmp/deploy/images/**/*.cyclonedx.bom.json
+            .integration/build/tmp/deploy/images/**/*.cyclonedx.vex.json
+          retention-days: 14
+      - name: Upload the comparison summaries
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: comparison-summary
+          path: comparison-summary.xml
+          retention-days: 14
+      - name: Upload the build-log tail
+        if: failure()
+        run: tail -n 5000 kas-build.log > build-log-tail.txt
+      - name: Upload the build-log tail artifact
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-log-tail
+          path: build-log-tail.txt
+          retention-days: 14

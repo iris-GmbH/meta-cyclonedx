@@ -76,14 +76,15 @@ SIGNATURE_MUTATION_COMMENT = (
 #: R5's image content change: a small harness-owned package added to the
 #: image install list. The recipe lives in the fixture layer (untracked).
 #: The install-list change rides CORE_IMAGE_EXTRA_INSTALL, which kas.yml
-#: forwards into BitBake — but only a fixed whitelist of *host* variables
-#: reaches the build container (the wrapper rejects --preserve-env), so
-#: the R5 invocation sets it inside the container through the wrapper's
-#: documented --runtime-args channel (see runtime_env_args). The value
-#: must contain no whitespace: core-image.bbclass interpolates the
-#: variable inside a whitespace-separated IMAGE_INSTALL assignment, and
-#: the wrapper word-splits the runtime-args string. No tracked file is
-#: ever touched; the delta is exactly one installed package.
+#: forwards into BitBake through its env: block — in container mode via
+#: the wrapper's documented --runtime-args channel (only a fixed
+#: whitelist of host variables reaches the build container, and the
+#: wrapper rejects --preserve-env; see runtime_env_args), in direct mode
+#: via the process environment (see kas_invocation). The value must
+#: contain no whitespace: core-image.bbclass interpolates the variable
+#: inside a whitespace-separated IMAGE_INSTALL assignment, and the
+#: wrapper word-splits the runtime-args string. No tracked file is ever
+#: touched; the delta is exactly one installed package.
 IMAGE_EXTRA_RECIPE_NAME = "harness-image-extra"
 FIXTURES_IMAGE_EXTRA_RECIPE = (
     FIXTURES_LAYER
@@ -110,18 +111,28 @@ JSONSCHEMA_HINT = (
     "documented in docs/testing.md; unit runs never import it)"
 )
 
+#: The engine-override value selecting direct mode: the kas tool installed
+#: in the current image runs the build, with no container engine and no
+#: wrapper nesting (the CI runner Pod *is* the kas image). Direct mode is
+#: never inferred — an unset override keeps the container-mode probe, so
+#: byte-identity claims are never silently voided by mode drift.
+KAS_DIRECT = "none"
+
 
 def detect_container_runtime(which=shutil.which, get=None):
     """Return the container engine name to drive kas with, or None.
 
     The ``KAS_CONTAINER_ENGINE`` environment variable (the engine override
-    documented by the kas wrapper itself) is honored as-is; otherwise Podman
-    is preferred and Docker accepted. ``which``/``get`` are injection points
-    for testing.
+    documented by the kas wrapper itself) is honored as-is; the explicit
+    value ``none`` selects direct mode (*KAS_DIRECT*) without any probing.
+    Otherwise Podman is preferred and Docker accepted. ``which``/``get``
+    are injection points for testing.
     """
     get = os.environ.get if get is None else get
     override = get("KAS_CONTAINER_ENGINE")
     if override is not None:
+        if override == KAS_DIRECT:
+            return KAS_DIRECT
         return override if which(override) else None
     for name in ("podman", "docker"):
         if which(name):
@@ -147,17 +158,39 @@ def ensure_kas_submodule():
         )
 
 
-def check_kas_pin():
-    """Verify the kas wrapper's container-image pin matches the submodule tag.
+def _pin_tag():
+    return _git("describe", "--tags", "--exact-match", cwd=KAS_DIR).strip()
 
-    Returns ``(tag, image_version)``. Raises if the submodule is not checked
-    out at a release tag or the wrapper's image version diverged from the
-    pin — the wrapper derives its default image tag from the
-    ``KAS_CONTAINER_SCRIPT_VERSION`` baked into the tagged script, so tag and
-    script version staying equal is what keeps the container image in
-    lockstep with the pin.
+
+def check_kas_pin(running_version=None, describe=None):
+    """Verify the executing kas's version tie to the submodule pin.
+
+    Returns ``(tag, version)``. Raises if the submodule is not checked
+    out at a release tag or the versions diverged — the skip-with-reason
+    philosophy of the matrix: acceptance evidence never silently comes
+    from the wrong userland.
+
+    Container mode (no *running_version*): the wrapper's container-image
+    pin must match the submodule tag — the wrapper derives its default
+    image tag from the ``KAS_CONTAINER_SCRIPT_VERSION`` baked into the
+    tagged script, so tag and script version staying equal is what keeps
+    the container image in lockstep with the pin.
+
+    Direct mode (*running_version*: what the executing kas tool reports
+    about itself, see direct_kas_version): v-normalized, it must equal
+    the submodule's release tag — the runner image is built FROM the
+    pinned kas release, so a drift here means the wrong image answered.
     """
-    tag = _git("describe", "--tags", "--exact-match", cwd=KAS_DIR).strip()
+    tag = (_pin_tag if describe is None else describe)()
+    if running_version is not None:
+        version = running_version.lstrip("v")
+        if tag.lstrip("v") != version:
+            raise RuntimeError(
+                f"the executing kas reports version {running_version!r}, "
+                f"but the submodule pin is tag {tag!r}; the kas running the "
+                "matrix and the pinned kas release must stay in lockstep"
+            )
+        return tag, version
     script_version = re.search(
         r'^KAS_CONTAINER_SCRIPT_VERSION="([^"]+)"',
         KAS_CONTAINER.read_text(),
@@ -176,6 +209,25 @@ def check_kas_pin():
             "at the recorded release tag"
         )
     return tag, version
+
+
+def direct_kas_version(which=shutil.which, run=subprocess.run):
+    """The version the kas tool installed in the current image reports.
+
+    ``kas --version`` prints e.g.
+    ``kas 5.5 (configuration format version 19, ...)``; the first
+    version token is the direct-mode version-tie input. ``None`` means
+    no kas is on PATH (or it reported nothing parseable) — direct mode
+    then skips the matrix with the reason, matching the wrapper pin
+    check's philosophy. ``which``/``run`` are injection points for
+    testing.
+    """
+    kas = which("kas")
+    if kas is None:
+        return None
+    reported = run([kas, "--version"], capture_output=True, text=True)
+    match = re.search(r"\d+(?:\.\w+)*", reported.stdout or "")
+    return match.group(0) if match else None
 
 
 # --- run observations -------------------------------------------------------
@@ -559,6 +611,26 @@ def runtime_env_args(env):
             )
         args += ["--runtime-args", f"-e {key}={value}"]
     return args
+
+
+def kas_invocation(engine, extra_env=None):
+    """The (command, process-env extras) for one kas build invocation.
+
+    Container mode drives kas through the submodule's wrapper
+    (*KAS_CONTAINER*), whose environment whitelist forces *extra_env*
+    onto the --runtime-args channel (see runtime_env_args). Direct mode
+    execs the kas tool installed in the current image — a plain
+    invocation, no wrapper argument chain — so *extra_env* rides the
+    process environment instead, and the project config's env: block
+    forwards it into BitBake the same way; the R5 install-list change
+    reaches the build config identically in both modes.
+    """
+    if engine == KAS_DIRECT:
+        return ["kas", "build", "kas.yml"], dict(extra_env or {})
+    command = [str(KAS_CONTAINER)]
+    if extra_env:
+        command += runtime_env_args(extra_env)
+    return command + ["build", "kas.yml"], {}
 
 
 def tail(text, lines=60):

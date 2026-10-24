@@ -15,7 +15,9 @@ Prerequisites:
 
 - A working container runtime: Podman or Docker. `pytest` skips
   the whole layer with an install hint if none is found. Set
-  `KAS_CONTAINER_ENGINE=podman|docker` to override the probe.
+  `KAS_CONTAINER_ENGINE=podman|docker` to override the probe, or
+  `KAS_CONTAINER_ENGINE=none` to select direct mode (see below) — the
+  probe itself never selects direct mode implicitly.
 - The kas tool arrives as the tag-pinned git submodule under `tools/kas`;
   the fixture initializes it automatically (`git submodule update --init
 tools/kas`), and the wrapper's container-image version stays in
@@ -29,6 +31,21 @@ tools/kas`), and the wrapper's container-image version stays in
   schema-validation tests skip with an install hint, e.g.
   `sudo apt-get install python3-jsonschema` or
   `python3 -m pip install jsonschema`.
+
+## Invocation modes
+
+**Container mode** (the default, and what the probe always selects when
+the override is unset) drives the build through the submodule's
+`tools/kas/kas-container` wrapper, which runs kas inside the pinned kas
+release container. **Direct mode** (`KAS_CONTAINER_ENGINE=none`) execs
+the kas tool installed in the current environment — on the CI runners,
+the runner Pod *is* that image (see the CI tiers below) — and never
+nests a second container engine, privileged or otherwise. Its version
+tie compares the executing kas's reported version against the submodule
+pin; a mismatch skips the matrix with the reason, like every other
+prerequisite gap. Mode selection is never inferred: byte-identity
+claims must not hinge on what happens to be installed, so an unset
+variable keeps container-mode behavior byte-for-byte.
 
 Checkout, build directory, downloads, and sstate cache all live under the
 single git-ignored `.integration/` directory, and `rm_work` caps the work
@@ -81,12 +98,15 @@ the kas wrapper and records every run against the same workspace:
 - **R4 — graph isolation**: one trivial _unused_ recipe added to a
   dedicated fixture layer; artifacts stay byte-identical.
 - **R5 — image content change**: one small harness-owned package
-  (`harness-image-extra`, in the fixture layer, delivered through the
-  `CORE_IMAGE_EXTRA_INSTALL` variable — set inside the build container
-  via the kas wrapper's `--runtime-args` channel, since the wrapper
-  forwards only a fixed host-environment whitelist) joins the install
-  list; it must appear in the rootfs manifest and as a component with a
-  dependency edge in the deployed SBOM.
+  (`harness-image-extra`, in the fixture layer) joins the install list,
+  delivered through the `CORE_IMAGE_EXTRA_INSTALL` variable — container
+  mode sets it inside the build container via the kas wrapper's
+  `--runtime-args` channel (the wrapper forwards only a fixed
+  host-environment whitelist), direct mode passes it in the process
+  environment, which the project config's `env:` block forwards; the
+  claim is identical in both modes. It must appear in the rootfs
+  manifest and as a component with a dependency edge in the deployed
+  SBOM.
 
 R2/R4 comparisons are byte-level; cross-regeneration comparisons (R3)
 use the `canonicalize` helper and never claim byte-identity. The
@@ -136,3 +156,65 @@ hash-addressed, so the hit rate follows how close the branch sits to what
 the autobuilder last published: sampled at ~40 % hits on `master` tip and
 higher on release branches. A miss is harmless — the task simply builds
 locally.
+
+## CI tiers
+
+Two GitHub Actions tiers carry these suites automatically (the decision
+record is `docs/adr/0012-run-acceptance-ci-on-self-managed-runners.md`);
+the workflow files are byte-identical between the fork and upstream, and
+every repository difference lives in configuration.
+
+- **Unit tier** — the dependency-free unit suite on GitHub-hosted
+  runners across Python 3.11, 3.12 and 3.13, on every pull request and
+  every merge to a supported branch (main, blacksail, wrynose,
+  scarthgap). This is the pre-merge gate; contributors need no Yocto
+  environment for their PR to get a verdict.
+- **Acceptance tier** — the R1–R5 matrix in **direct mode**, on
+  merge to a supported branch (path-filtered to layer and harness
+  files), nightly against the default branch, or on dispatch against
+  any ref. It is never triggered by pull requests: GitHub's security
+  guidance for public repositories forbids routing fork-contributor
+  code to self-managed machines, so acceptance is a merge-first event
+  model. Every run publishes the deployed SBOM/VEX documents and the
+  comparison summaries; a failed run also publishes the build-log tail;
+  artifacts are retained 14 days. A cold build needs the disk and hours
+  noted above — which is exactly why this tier cannot live on
+  GitHub-hosted runners — and gets an 8-hour timeout so a cold
+  mirror-miss build is a slow success, not a false red. The session
+  starts cold (fresh runner Pod, reuse only from the published
+  autobuilder sstate mirror); within one session the R2/R4
+  re-invocations are warm as on a maintainer machine.
+
+The runners are maintainer-provided and self-managed; this project's
+instance is autoscaling Kubernetes jobs (actions-runner-controller scale
+sets): ephemeral Pods, one job per Pod, never privileged, with ≥ 64 GB
+node-local scratch. The runner Pod *is* the runner image — the kas
+release image named by the `tools/kas` submodule pin, plus the Actions
+runner binary, pytest, and jsonschema — built by the dispatch-only
+`runner-image` workflow into the same repository's own package
+namespace (`ghcr.io/<owner>/<repo>/kas-runner:<kas-version>-<runner-version>`),
+so no cross-repository package trust is required and no nested container
+engine ever appears. Shared warm-cache infrastructure (RWX PVC or
+S3-backed sstate) is the documented upgrade path, not part of the setup.
+
+### Enabling acceptance on a repository (rollout checklist)
+
+Until a repository completes this list its acceptance runs appear with
+everything skipped — inert by design, which is also what makes the
+identical workflow file safe to merge upstream:
+
+1. Register self-managed runners for the repository, labeled
+   `self-hosted`, `Linux`, `X64` plus a dedicated project label, with
+   Pods pulling the runner image from the repository's own package
+   namespace (confirm the cluster can pull it; record any registry
+   detour otherwise).
+2. Set the repository Actions variable `ACCEPTANCE_RUNNER_LABELS` to
+   the JSON array of labels, e.g.
+   `["self-hosted", "Linux", "X64", "meta-cyclonedx"]` — unset means
+   skipped, never queued.
+3. Branch protection on main, blacksail, wrynose and scarthgap:
+   require the three `unit (Python …)` checks before merge with admin
+   enforcement, and require code-owner review for `.github/workflows/`
+   (CODEOWNERS). Applied identically in both repositories.
+4. Prove the tier on this repository: one dispatch-driven full-matrix
+   run and one nightly, both green with downloadable artifacts.

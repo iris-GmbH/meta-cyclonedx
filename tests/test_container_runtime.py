@@ -35,6 +35,25 @@ def test_no_container_runtime_yields_no_runtime():
     assert probe(available=set()) is None
 
 
+def test_none_override_never_falls_back_to_the_probe():
+    def no_probe(name):
+        raise AssertionError("an explicit direct-mode override must not probe")
+
+    assert (
+        kas_env.detect_container_runtime(
+            which=no_probe,
+            get=lambda key, default=None: (
+                "none" if key == "KAS_CONTAINER_ENGINE" else default
+            ),
+        )
+        == kas_env.KAS_DIRECT
+    )
+
+
+def test_direct_mode_indicator_survives_available_engines():
+    assert probe(engine_var="none", available={"podman", "docker"}) == kas_env.KAS_DIRECT
+
+
 def test_skip_hint_names_the_installation_options():
     hint = kas_env.SKIP_HINT
     assert "podman" in hint.lower() and "docker" in hint.lower()
