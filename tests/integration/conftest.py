@@ -121,10 +121,13 @@ class KasRunRecorder:
     def invoke(self, name, extra_env=None):
         """Run the matrix configuration under this name; return its record.
 
-        *extra_env* is set inside the build container (the image-change
-        run's install-list forwarding) via the wrapper's --runtime-args
-        channel — a plain host export would be dropped by the wrapper's
-        environment whitelist — and never leaks into another run.
+        *extra_env* is set in the build environment (the image-change
+        run's install-list forwarding) through the mode-appropriate
+        channel — the wrapper's --runtime-args channel in container
+        mode (a plain host export would be dropped by the wrapper's
+        environment whitelist), the process environment in direct mode
+        (the project config's env: block forwards it) — and never leaks
+        into another run.
 
         A failed invocation aborts the remaining stages: BitBake did
         not advance any stamp, so the next invocation would replay the
@@ -146,24 +149,34 @@ class KasRunRecorder:
         if not self._pinned:
             try:
                 kas_env.ensure_kas_submodule()
-                tag, version = kas_env.check_kas_pin()
+                if self.engine == kas_env.KAS_DIRECT:
+                    running = kas_env.direct_kas_version()
+                    if running is None:
+                        raise RuntimeError(
+                            "KAS_CONTAINER_ENGINE=none selects direct mode, "
+                            "but no kas executable is on PATH; install the "
+                            "kas tool (the CI runner image ships it) or unset "
+                            "the override"
+                        )
+                    tag, version = kas_env.check_kas_pin(running_version=running)
+                else:
+                    tag, version = kas_env.check_kas_pin()
             except (RuntimeError, subprocess.CalledProcessError) as exc:
                 # Prerequisite gaps (submodule not checked out and not
                 # fetchable — a git fetch failure surfaces as
-                # CalledProcessError through the _git helpers — or a
-                # wrapper/tag pin mismatch) skip the matrix with the
-                # reason, as contributor documentation promises,
-                # rather than erroring out of every run at once.
+                # CalledProcessError through the _git helpers —, a pin
+                # or version-tie mismatch, or direct mode without a kas
+                # tool) skip the matrix with the reason, as contributor
+                # documentation promises, rather than erroring out of
+                # every run at once.
                 pytest.skip(str(exc) or repr(exc))
             print(f"kas {version} (tag {tag}) via {self.engine}", file=sys.stderr)
             self._pinned = True
         kas_env.ensure_fixture_layer()
         env = kas_env.workspace_env()
         env["KAS_CONTAINER_ENGINE"] = self.engine
-        command = [str(kas_env.KAS_CONTAINER)]
-        if extra_env:
-            command += kas_env.runtime_env_args(extra_env)
-        command += ["build", "kas.yml"]
+        command, env_extras = kas_env.kas_invocation(self.engine, extra_env=extra_env)
+        env.update(env_extras)
         returncode, lines = self._stream(command, env)
         build = KasBuildResult(
             engine=self.engine,

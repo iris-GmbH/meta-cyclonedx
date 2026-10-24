@@ -33,9 +33,9 @@ target: core-image-minimal
 # CORE_IMAGE_EXTRA_INSTALL carries the image-change run (R5): while set,
 # its content joins the image's install list — a tracked-tree-free way to
 # change exactly one thing in the rootfs. Unset for every other run, so
-# no other run's signatures move. Only variables already present in the
-# container environment arrive here: the harness sets this one with the
-# wrapper's --runtime-args channel, not a host export.
+# no other run's signatures move. Container mode delivers it through
+# the wrapper's --runtime-args channel, direct mode (KAS_CONTAINER_ENGINE
+# =none, e.g. on a CI runner) through the process environment.
 env:
   DL_DIR:
   SSTATE_DIR:
