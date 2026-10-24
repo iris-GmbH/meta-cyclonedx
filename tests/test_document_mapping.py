@@ -100,3 +100,25 @@ def test_config_validation_names_supported_values():
     error = meta_cyclonedx.config_errors("1.7", "kitchen-appliance")
     assert "CYCLONEDX_IMAGE_TYPE" in error
     assert "firmware" in error
+
+
+def test_primary_cpe_and_purl_facts_are_emitted_on_the_component():
+    facts = default_facts(primary={
+        "type": "firmware", "name": "core-image", "version": "1.0",
+        "cpe": "cpe:2.3:o:vendor:core-image:1.0:*:*:*:*:*:*:*",
+        "purl": "pkg:yocto/core/core-image@1.0?layer_version=abc123",
+    })
+
+    sbom, _vex, _logs = render_docs(facts)
+
+    assert sbom["metadata"]["component"]["cpe"] == \
+        "cpe:2.3:o:vendor:core-image:1.0:*:*:*:*:*:*:*"
+    assert sbom["metadata"]["component"]["purl"] == \
+        "pkg:yocto/core/core-image@1.0?layer_version=abc123"
+
+
+def test_primary_component_without_identifier_facts_carries_neither():
+    sbom, _vex, _logs = render_docs(default_facts())
+
+    assert "cpe" not in sbom["metadata"]["component"]
+    assert "purl" not in sbom["metadata"]["component"]
