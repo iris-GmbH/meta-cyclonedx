@@ -30,6 +30,9 @@ log                   callable(level, message); level is an int debug level
                       or one of "warn", "error", "note"
 primary               the delivered product:
     type / name / version         primary component metadata
+    cpe / purl                    optional identifiers, generated or
+                                  configured; when present they are emitted
+                                  on the primary component
     external_references           optional list; when the key is absent the
                                   primary component carries none
 fragments             per-recipe normalized facts, keyed by recipe name, in
@@ -73,11 +76,85 @@ SUPPORTED_IMAGE_TYPES = [
     "cryptographic-asset",
 ]
 
+# The CPE part of the image component CPE, keyed by CycloneDX image type.
+# Types not listed here get the wildcard part.
+IMAGE_CPE_PARTS = {
+    "application": "a",
+    "device": "h",
+    "firmware": "o",
+    "operating-system": "o",
+}
 
-def config_errors(spec_version, image_type):
+# Grammar of the CPE 2.3 formatted string binding, per the NIST binding spec.
+_CPE_23_ESCAPED = r"""\\[\\*?!"#$%&'()+,/:;<=>@\[\]^`{|}~ ]"""
+_CPE_23_VALUE = rf"(?:[*-]|(?:\?*|\*?)(?:[a-zA-Z0-9\-\._]|{_CPE_23_ESCAPED})+(?:\?*|\*?))"
+_CPE_23_LANGUAGE = r"(?:[*-]|[a-zA-Z]{2,3}(?:-(?:[a-zA-Z]{2}|[0-9]{3}))?)"
+CPE_23_REGEX = re.compile(
+    rf"cpe:2\.3:[aho*-](?::{_CPE_23_VALUE}){{5}}:{_CPE_23_LANGUAGE}(?::{_CPE_23_VALUE}){{4}}"
+)
+
+
+def cpe_23_escape(value):
+    """
+    Escape a value for use in a single component of a CPE 2.3 formatted
+    string binding. Characters outside [a-z0-9._-] are lower-cased and
+    backslash escaped; the wildcard values "*" and "-" pass through
+    unchanged.
+    """
+    if value in ("*", "-"):
+        return value
+    return re.sub(r"[^a-z0-9\-._]", lambda match: "\\" + match.group(0), value.lower())
+
+
+def cpe_23_is_valid(cpe):
+    """
+    Check whether a string matches the CPE 2.3 formatted string binding
+    grammar.
+    """
+    return bool(CPE_23_REGEX.fullmatch(cpe))
+
+
+def image_cpe(image_type, vendor, name, version, override=None):
+    """
+    Build the CPE of the image component. A configured override is returned
+    unchanged (config_errors validates it); the generated CPE derives its
+    part from the image type, uses the wildcard vendor when none is
+    configured and escapes the identity values it takes from the component.
+    """
+    if override:
+        return override
+    return "cpe:2.3:{}:{}:{}:{}:*:*:*:*:*:*:*".format(
+        IMAGE_CPE_PARTS.get(image_type, "*"),
+        cpe_23_escape(vendor or "*"),
+        cpe_23_escape(name),
+        cpe_23_escape(version),
+    )
+
+
+def image_purl(base_purl, layer_version=None, repository_url=None):
+    """
+    Assemble the PURL of the image component from the Yocto base PURL (built
+    from the layer namespace, BPN and PV of the image recipe) and the layer
+    facts. Both qualifiers are optional and are emitted in ascending key
+    order, per the PURL specification.
+    """
+    import urllib.parse
+
+    qualifiers = []
+    if layer_version:
+        qualifiers.append("layer_version=" + layer_version)
+    if repository_url:
+        qualifiers.append("repository_url=" + urllib.parse.quote(repository_url, safe=""))
+    if not qualifiers:
+        return base_purl
+    return base_purl + "?" + "&".join(qualifiers)
+
+
+def config_errors(spec_version, image_type, image_cpe=None):
     """
     Validate renderer-relevant configuration and return a human-readable
-    fatal error string, or None when the configuration is supported.
+    fatal error string, or None when the configuration is supported. The
+    image_cpe argument carries the optional CYCLONEDX_IMAGE_CPE override.
     """
     if spec_version not in SUPPORTED_SPEC_VERSIONS:
         return (f"Unsupported CYCLONEDX_SPEC_VERSION: {spec_version}. "
@@ -88,6 +165,9 @@ def config_errors(spec_version, image_type):
             f"Unsupported CYCLONEDX_IMAGE_TYPE value '{image_type}'. "
             f"Valid types are: {', '.join(SUPPORTED_IMAGE_TYPES)}"
         )
+
+    if image_cpe and not cpe_23_is_valid(image_cpe):
+        return f"Invalid CPE 2.3 in CYCLONEDX_IMAGE_CPE: '{image_cpe}'"
     return None
 
 
@@ -281,6 +361,10 @@ def render(facts):
         "version": image_version,
         "bom-ref": metadata_component_ref
     }
+    if primary.get("cpe"):
+        sbom_metadata["component"]["cpe"] = primary["cpe"]
+    if primary.get("purl"):
+        sbom_metadata["component"]["purl"] = primary["purl"]
     if "external_references" in primary:
         sbom_metadata["component"]["externalReferences"] = primary["external_references"]
 
