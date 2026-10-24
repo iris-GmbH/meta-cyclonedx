@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT
+#
+# The workflow definitions are the only files that route work onto the
+# self-managed acceptance runners; branch protection on every supported
+# branch (both repositories) requires a code-owner review for changes
+# here. Upstream had no CODEOWNERS before this file, so none is being
+# preserved or widened by it.
+
+/.github/workflows/ @Jasper-Ben

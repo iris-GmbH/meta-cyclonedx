@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: MIT
+#
+# Unit tier: the dependency-free pytest suite on GitHub-hosted runners,
+# the pre-merge gate on every pull request and merge to a supported
+# branch. A plain `pytest` run honors each branch's own test-selection
+# configuration (integration stays deselected via pyproject.toml).
+#
+# This file is byte-identical between the fork and upstream; merge it as
+# an identical blob (see docs/adr/0012 and docs/testing.md).
+
+name: unit
+
+on:
+  pull_request:
+  push:
+    branches: [main, blacksail, wrynose, scarthgap]
+  workflow_dispatch:
+
+concurrency:
+  group: unit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: unit (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install the only test dependency
+        run: python -m pip install pytest
+      - name: Run the unit suite
+        run: python -m pytest
