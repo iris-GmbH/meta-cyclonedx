@@ -8,6 +8,9 @@
 CVE_PRODUCT ??= "${BPN}"
 CVE_VERSION ??= "${PV}"
 
+# Set the update field in the CPE string. Defaults to "no applicable update value exists"
+CYCLONEDX_CPE_UPDATE ??= "-"
+
 # CycloneDX specification version to generate
 # Options: "1.6", "1.7"
 # Version 1.6: Modern format with enhanced features (default)
@@ -191,6 +194,7 @@ python do_populate_cyclonedx() {
     # get all CVE product names and version from the recipe
     name = d.getVar("CVE_PRODUCT")
     version = d.getVar("CVE_VERSION")
+    cpe_update = d.getVar("CYCLONEDX_CPE_UPDATE")
 
     # We create and populate a per-recipe partial sbom which will be added to the sstate cache
     pn_list = {}
@@ -228,7 +232,7 @@ python do_populate_cyclonedx() {
             purl = spdx_purls[0]
         else:
             purl = 'pkg:generic/{}{}@{}'.format(f"{vendor}/" if vendor else '', product, short_version)
-        for pkg in renderer.component_identity(product_token, version, purl, references):
+        for pkg in renderer.component_identity(name, version, cpe_update, purl, references):
             # Check if we already have a package with this CPE
             existing_pkg = next((c for c in pn_list["pkgs"] if c["cpe"] == pkg["cpe"]), None)
             if existing_pkg:

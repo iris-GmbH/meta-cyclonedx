@@ -91,7 +91,7 @@ def config_errors(spec_version, image_type):
     return None
 
 
-def component_identity(products_names, version, purl, external_references=None):
+def component_identity(products_names, version, cpe_update, purl, external_references=None):
     """
     Build one component identity record per vulnerability-correlation
     product name of a recipe. Names carrying a "vendor:" qualifier gain a
@@ -122,7 +122,7 @@ def component_identity(products_names, version, purl, external_references=None):
             "name": product,
             "version": version,
             "type": "library",
-            "cpe": 'cpe:2.3:*:{}:{}:{}:*:*:*:*:*:*:*'.format(vendor or "*", product, version),
+            "cpe": 'cpe:2.3:*:{}:{}:{}:{}:*:*:*:*:*:*'.format(vendor or "*", product, version, cpe_update),
             "purl": purl,
             "bom-ref": str(uuid.uuid4())
         }
