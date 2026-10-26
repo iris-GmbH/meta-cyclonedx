@@ -8,6 +8,9 @@
 CVE_PRODUCT ??= "${BPN}"
 CVE_VERSION ??= "${PV}"
 
+# Set the update field in the CPE string. Defaults to "no applicable update value exists"
+CYCLONEDX_CPE_UPDATE ??= "-"
+
 # Defines SBOM_CVE_CHECK_DEPLOY_DB_DIR, used by the kernel CVE filtering below
 # to find the cvelist database deployed by sbom-cve-check-update-cvelist-native.
 require conf/sbom-cve-check-config.inc
@@ -213,6 +216,7 @@ python do_populate_cyclonedx() {
     # get all CVE product names and version from the recipe
     name = d.getVar("CVE_PRODUCT")
     version = d.getVar("CVE_VERSION")
+    cpe_update = d.getVar("CYCLONEDX_CPE_UPDATE")
 
     # We create and populate a per-recipe partial sbom which will be added to the sstate cache
     pn_list = {}
@@ -233,7 +237,7 @@ python do_populate_cyclonedx() {
                   if d.getVar("CYCLONEDX_ADD_COMPONENT_SOURCE_REFERENCES") == "1" else None)
 
     # append all defined package names for recipe to pn_list pkgs
-    for pkg in renderer.component_identity(name, version, purl, references):
+    for pkg in renderer.component_identity(name, version, cpe_update, purl, references):
         # Check if we already have a package with this CPE
         existing_pkg = next((c for c in pn_list["pkgs"] if c["cpe"] == pkg["cpe"]), None)
         if existing_pkg:
