@@ -10,7 +10,7 @@ from helpers import PLACEHOLDER
 
 
 def test_one_identity_per_cve_product_alias():
-    pkgs = meta_cyclonedx.component_identity("libfoo foo", "1.2", "pkg:yocto/foo@1.2")
+    pkgs = meta_cyclonedx.component_identity("libfoo foo", "1.2", "-", "pkg:yocto/foo@1.2")
 
     assert {p["name"] for p in pkgs} == {"libfoo", "foo"}
     assert {p["version"] for p in pkgs} == {"1.2"}
@@ -19,25 +19,25 @@ def test_one_identity_per_cve_product_alias():
 
 
 def test_vendor_qualifier_becomes_group_and_cpe_vendor():
-    pkgs = meta_cyclonedx.component_identity("vendor:libfoo", "1.2", "pkg:yocto/x")
+    pkgs = meta_cyclonedx.component_identity("vendor:libfoo", "1.2", "-", "pkg:yocto/x")
 
     assert pkgs[0]["name"] == "libfoo"
     assert pkgs[0]["group"] == "vendor"
-    assert pkgs[0]["cpe"] == "cpe:2.3:*:vendor:libfoo:1.2:*:*:*:*:*:*:*"
+    assert pkgs[0]["cpe"] == "cpe:2.3:*:vendor:libfoo:1.2:-:*:*:*:*:*:*"
 
 
 def test_git_suffixes_and_empty_versions_stay_matchable():
-    [pkg] = meta_cyclonedx.component_identity("app", "6.6+gitAUTOINC+abcdef", "p")
+    [pkg] = meta_cyclonedx.component_identity("app", "6.6+gitAUTOINC+abcdef", "-", "p")
     assert pkg["version"] == "6.6"
 
-    [pkg] = meta_cyclonedx.component_identity("app", "  ", "p")
+    [pkg] = meta_cyclonedx.component_identity("app", "  ", "-", "p")
     assert pkg["version"] == "unknown"
     assert ":unknown:" in pkg["cpe"]
 
 
 def test_external_references_are_attached_when_supplied():
     refs = [{"type": "vcs", "url": "https://example.org/src.git@deadbeef"}]
-    [pkg] = meta_cyclonedx.component_identity("app", "1", "p", external_references=refs)
+    [pkg] = meta_cyclonedx.component_identity("app", "1", "-", "p", external_references=refs)
     assert pkg["externalReferences"] == refs
 
 

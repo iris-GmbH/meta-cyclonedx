@@ -139,6 +139,17 @@ You may disable this by setting:
 CYCLONEDX_ADD_LAYER_REFERENCES = "0"
 ```
 
+### CPE Update
+
+`CYCLONEDX_CPE_UPDATE` controls the CPE update field. It defaults to `-` (not
+applicable), unlike `*` (any update), to avoid overly broad vulnerability matches.
+
+Override it per recipe for specific updates, such as release candidates:
+
+```bitbake
+CYCLONEDX_CPE_UPDATE = "rc3"
+```
+
 ### Runtime vs Build-time Packages
 
 By default, meta-cyclonedx will only include run-time packages in the SBOM,
