@@ -113,7 +113,16 @@ You can change this type to match the type of your image if needed:
 CYCLONEDX_IMAGE_TYPE = "operating-system"
 ```
 
-Possible values depend on the configured CycloneDX specification version.
+## Recipe Component Type
+
+The type of `components[].type` is `library` by default.
+You can override the component type for all components generated from a recipe by setting the following variable in the recipe:
+
+```sh
+CYCLONEDX_COMPONENT_TYPE = "application"
+```
+
+Possible values for image and components types depend on the configured CycloneDX specification version.
 For a complete list see [CycloneDX 1.6](https://cyclonedx.org/docs/1.6/json/#metadata_tools_oneOf_i0_components_items_type),
 [CycloneDX 1.7](https://cyclonedx.org/docs/1.7/json/#metadata_tools_oneOf_i0_components_items_type).
 
