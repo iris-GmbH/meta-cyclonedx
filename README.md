@@ -161,12 +161,13 @@ for reference.
 
 The layers that have a git remote url are added to the `externalReferences` of
 the top-level image component in metadata by default. The `url` of the external
-reference is in the format `{remote_url}@{revision}{is_modified}`. If the layer
-has been modified, the `is_modified` in the url will be set to ` -- modified`.
+reference is in the format `{remote_url}@{revision}`.
 Layers for which no git remote url can be resolved are skipped with a warning.
 Credentials embedded in a resolved remote url are stripped from the reference
 and its properties. Layer references use the CycloneDX `vcs` external reference
 type.
+If the layer has been modified, `with uncommitted changes` will be appended to
+the comment of the external reference.
 
 For CycloneDX SBOMs with version 1.7 the name, remote url, revision and whether
 it was modified are saved as `properties`. The property names for these are
