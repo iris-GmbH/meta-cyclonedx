@@ -377,21 +377,48 @@ CYCLONEDX_ADD_VULN_TIMESTAMPS = "0"
 
 ### Kernel CVE Filtering
 
-Kernel CVE feeds are matched by kernel version alone and routinely flag CVEs
-whose affected files were never compiled into your particular kernel
-configuration, so meta-cyclonedx cross-checks each kernel CVE's affected
-files against the sources actually compiled for `virtual/kernel` and marks
-the unaffected ones as `not_affected` in the VEX output, letting
-DependencyTrack automatically filter them out instead of flagging them for
-manual triage:
+This option compares the affected C source files named in a kernel CVE record
+with the source-file list extracted from the kernel and modules' DWARF debug
+information. When the CVE matches your kernel version and none of its affected
+files appear in that list, it adds a VEX assessment of `not_affected` with the
+justification `code_not_present`.
+
+This can reduce Dependency-Track findings for code excluded by your kernel
+configuration. The SBOM remains unchanged, and explicit `CVE_STATUS` decisions
+take precedence.
 
 ```sh
-CYCLONEDX_VEX_ADD_KERNEL_CVE = "1"
+CYCLONEDX_VEX_ADD_KERNEL_CVE = "1"  # Default: "0"
 ```
 
-This is disabled by default (`"0"`) and only applies to whichever recipe
-provides `virtual/kernel`. No extra configuration is required: the CVE
-database it relies on is fetched automatically.
+> [!CAUTION]
+> A file missing from the DWARF source list is treated as evidence that its code
+> was not built. The check does not determine whether a vulnerability can be
+> exploited. If a CVE record omits an affected file, or debug information omits a
+> compiled file, vulnerable code can still be present despite a `not_affected`
+> result. **Leave it disabled if that risk is unacceptable.**
+
+It applies only to `virtual/kernel` and automatically downloads a pinned snapshot
+of the CVE database.
+
+Compiler headers are looked up in the recipe's build dependencies. If a header
+cannot be found or matched to a single file, or a C source file is outside the
+kernel source and build directories, the filter leaves CVE assessments unchanged.
+
+**Kernel build requirements:**
+
+- Enable `CONFIG_DEBUG_INFO=y`.
+- Disable `CONFIG_DEBUG_INFO_SPLIT`.
+
+**Keep the CVE database updated:**
+
+The revision is pinned for reproducibility and does **not refresh automatically**.
+Set a newer [CVEProject/cvelistV5](https://github.com/CVEProject/cvelistV5) commit
+in your distro configuration or `local.conf`:
+
+```bitbake
+CYCLONEDX_KERNEL_CVE_DB_SRCREV = "<full commit SHA>"
+```
 
 ### sbom-cve-check Results
 

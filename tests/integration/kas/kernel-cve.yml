@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT
+# Real core-image-minimal/kernel packaging with a small, synthetic CVE database.
+header:
+  version: 19
+  includes:
+    - kas.yml
+
+repos:
+  kernel-cve-tests:
+    path: tests/integration/fixtures/meta-kernel-cve
+
+env:
+  CYCLONEDX_VEX_ADD_KERNEL_CVE: "1"
+  CYCLONEDX_KERNEL_CVE_DB_SRCREV: "0000000000000000000000000000000000000001"
+
+local_conf_header:
+  kernel-cve-tests: |
+    PREFERRED_PROVIDER_virtual/kernel = "linux-yocto"
+    CORE_IMAGE_EXTRA_INSTALL += "kernel-module-dummy"
+    # The matcher needs the configured build and source trees. On a clean
+    # workspace, exercise real packaging instead of restored kernel outputs.
+    RM_WORK_EXCLUDE += "linux-yocto cyclonedx-cvelist-native"
+    SSTATE_SKIP_CREATION:pn-linux-yocto = "1"
