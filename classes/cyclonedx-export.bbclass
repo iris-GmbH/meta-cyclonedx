@@ -644,9 +644,9 @@ def generate_layer_references(d):
             bb.warn(f"cyclonedx-export: stripped credentials from the remote url of layer {name}")
 
         reference = {
-            "url": f"{public_remote_url}@{rev}{ismodified}",
+            "url": f"{public_remote_url}@{rev}",
             "type": "vcs",
-            "comment": f"Yocto metadata layer {name}"
+            "comment": f"Yocto metadata layer {name}{' with uncommitted changes' if ismodified else ''}"
         }
         references.append(reference)
     return references
