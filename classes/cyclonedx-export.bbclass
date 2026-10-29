@@ -793,9 +793,9 @@ def generate_layer_references(d):
             continue
 
         reference = {
-            "url": f"{public_remote_url}@{rev}{ismodified}",
+            "url": f"{public_remote_url}@{rev}",
             "type": "vcs",
-            "comment": f"Yocto metadata layer {name}"
+            "comment": f"Yocto metadata layer {name}{' with uncommitted changes' if ismodified else ''}"
         }
         if spec_version == "1.7":
             reference["properties"] = [
