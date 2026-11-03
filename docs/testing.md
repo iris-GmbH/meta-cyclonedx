@@ -32,6 +32,37 @@ tools/kas`), and the wrapper's container-image version stays in
   `sudo apt-get install python3-jsonschema` or
   `python3 -m pip install jsonschema`.
 
+## Kernel CVE filter unit tests
+
+Unit tests run without BitBake. Set `COREBASE` to also test OE-Core's
+version matcher (requires Python `packaging`):
+
+```sh
+COREBASE=/path/to/poky python3 -m pytest -q tests/test_kernel_cve.py
+```
+
+## Kernel CVE filter acceptance build
+
+Run the kernel/module scenario alone, or as part of `pytest -m integration`:
+
+```sh
+python3 -m pytest -m integration tests/integration/test_kernel_cve_build.py
+```
+
+The `tests/integration/kas/kernel-cve.yml` overlay enables kernel DWARF
+and the `dummy` module. Synthetic CVEs pass through the production database
+recipe and sysroot task; no full CVEProject database download is needed.
+
+Three builds compare filtering disabled, enabled, and enabled with an updated
+database. Checks cover source matching, explicit decisions, VEX references
+and schemas, unchanged SBOM content, no database dependency when disabled,
+and assessment refresh without kernel recompilation. Documents and packaging
+evidence are saved under `.integration/kernel-cve-evidence/`.
+
+The main suite's prerequisites apply; skips do not establish acceptance.
+The kernel is built and packaged without saving those outputs to sstate;
+source/build trees are retained for filtering.
+
 ## Invocation modes
 
 **Container mode** (the default, and what the probe always selects when
@@ -46,6 +77,9 @@ pin; a mismatch skips the matrix with the reason, like every other
 prerequisite gap. Mode selection is never inferred: byte-identity
 claims must not hinge on what happens to be installed, so an unset
 variable keeps container-mode behavior byte-for-byte.
+
+If Docker's bridge cannot reach source mirrors but the host can, set
+`KAS_TEST_RUNTIME_ARGS="--network=host"`; direct mode ignores it.
 
 Checkout, build directory, downloads, and sstate cache all live under the
 single git-ignored `.integration/` directory, and `rm_work` caps the work

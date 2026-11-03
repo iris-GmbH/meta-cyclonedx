@@ -1,0 +1,13 @@
+{
+  "CVE-2099-0001": ["drivers/cyclonedx-test/absent.c"],
+  "CVE-2099-0002": ["init/main.c"],
+  "CVE-2099-0003": ["drivers/net/dummy.c"],
+  "CVE-2099-0004": ["drivers/cyclonedx-test/absent.h"],
+  "CVE-2099-0005": ["drivers/cyclonedx-test/absent.S"],
+  "CVE-2099-0006": ["drivers/cyclonedx-test/absent.c", "init/main.c"],
+  "CVE-2099-0007": ["drivers/cyclonedx-test/absent.c"],
+  "CVE-2099-0008": ["drivers/cyclonedx-test/absent.c"],
+  "CVE-2099-0009": ["drivers/cyclonedx-test/absent.c"],
+  "CVE-2099-0010": null,
+  "CVE-2099-0011": ["drivers/cyclonedx-test/absent.c"]
+}
