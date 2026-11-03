@@ -220,9 +220,14 @@ python do_populate_cyclonedx() {
         pn_list["pkgs"].append(pkg)
         bom_ref = pkg["bom-ref"]
 
-        # append any CVEs patched
+        # append any CVEs patched by a patch file. get_patched_cves() also
+        # returns the CVE_STATUS entries with decoded status "Patched"; leave
+        # those to the CVE_STATUS loop below so that their state and
+        # justification are kept instead of being replaced by "fix-file-included".
         patched_cves = get_patched_cves(d)
-        for cve_id in patched_cves:
+        cve_status = d.getVarFlags("CVE_STATUS") or {}
+        status_patched = {c for c in cve_status if decode_cve_status(d, c)[0] == "Patched"}
+        for cve_id in sorted(patched_cves - status_patched):
             cve = (
                 cve_id,
                 "Patched",
@@ -233,11 +238,8 @@ python do_populate_cyclonedx() {
 
         # in scarthgap the get_patched_cves function filters CVE_STATUS to only
         # include "Patched" decoded status, however we want "Ignored" statuses as well.
-        for cve_id in (d.getVarFlags("CVE_STATUS") or {}):
+        for cve_id in cve_status:
             decoded_status, state, justification = decode_cve_status(d, cve_id)
-            # avoid duplicates
-            if decoded_status == "Patched":
-                continue
             cve = (
                 cve_id,
                 decoded_status,
