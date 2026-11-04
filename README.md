@@ -12,7 +12,7 @@ produces [CycloneDX](https://cyclonedx.org/) Software Bill of Materials
 
 This layer generates **CycloneDX** compliant SBOMs with the following features:
 
-- Currently, support for CycloneDX specification 1.6 and 1.4
+- Currently, support for CycloneDX specification 1.6 and 1.7
 - Support for multiple supported Yocto (LTS) releases.
 - Improved package matching against the [NIST NVD](https://nvd.nist.gov/) by
   fixing [CPE](https://nvd.nist.gov/products/cpe) generation process.
@@ -60,25 +60,40 @@ INHERIT += "cyclonedx-export"
 
 ### CycloneDX Specification Version
 
-For backwards-compatibility, meta-cyclonedx generates **CycloneDX 1.4** format
-SBOMs on scarthgap by default. The recommended setting is **1.6**, the newer
-format with enhanced metadata and timestamps; to configure it, set in your
-`local.conf`:
+> **:warning: Default change: CycloneDX 1.4 has been retired on this
+> branch.** By default, this branch now generates **CycloneDX 1.6**
+> documents, not 1.4: the document renderer shared by all maintained
+> `meta-cyclonedx` branches implements the standardized CycloneDX line
+> (**ECMA-424, 2024**): CycloneDX 1.6 was the first standardized version
+> of that line and 1.7 is standardized as well, while **1.4 predates the
+> standardization**. Default-config
+> documents therefore change `specVersion` from `"1.4"` to `"1.6"`, and
+> an explicit `CYCLONEDX_SPEC_VERSION = "1.4"` fails the build at parse
+> time, naming the supported versions (1.6, 1.7).
+>
+> **Escape hatch:** if CycloneDX 1.4 output is mandatory for your
+> downstream tooling, pin the `meta-cyclonedx` layer to the last
+> scarthgap revision before the backport — commit
+> `03a06b3d8fa8f6c4165d6906599c05d675b0b983`, where 1.4 is still the
+> default and still accepted:
+>
+> ```sh
+> git -C sources/meta-cyclonedx checkout 03a06b3d8fa8f6c4165d6906599c05d675b0b983
+> ```
+
+By default, meta-cyclonedx generates **CycloneDX 1.6** format SBOMs. You
+can configure a different supported version if needed:
 
 ```sh
-CYCLONEDX_SPEC_VERSION = "1.6"
+CYCLONEDX_SPEC_VERSION = "1.6"  # Default - first standardized version (ECMA-424)
+# Or for the latest standardized version:
+# CYCLONEDX_SPEC_VERSION = "1.7"
 ```
 
 **Version differences:**
 
-- **1.4**: Legacy format for compatibility with older tools (default)
-- **1.6**: Modern format with enhanced metadata and timestamps
-
-**Warning:** the BitBake acceptance harness (`docs/testing.md`) validates
-CycloneDX **1.6** documents only; its kas configuration forces
-`CYCLONEDX_SPEC_VERSION = "1.6"` regardless of this layer's **1.4**
-default. The 1.4 output remains supported, but a build left at the
-default ships a combination the acceptance runs never exercise.
+- **1.6**: Modern format with enhanced metadata and timestamps (default, first standardized version)
+- **1.7**: Latest standardized version with advanced cryptography transparency, intellectual property transparency, and citations
 
 ### Image Component Version
 
@@ -117,8 +132,7 @@ CYCLONEDX_IMAGE_TYPE = "operating-system"
 ```
 
 Possible values depend on the configured CycloneDX specification version.
-For a complete list see [CycloneDX 1.4](https://cyclonedx.org/docs/1.4/json/#metadata_component_type),
-[CycloneDX 1.6](https://cyclonedx.org/docs/1.6/json/#metadata_tools_oneOf_i0_components_items_type),
+For a complete list see [CycloneDX 1.6](https://cyclonedx.org/docs/1.6/json/#metadata_tools_oneOf_i0_components_items_type),
 [CycloneDX 1.7](https://cyclonedx.org/docs/1.7/json/#metadata_tools_oneOf_i0_components_items_type).
 
 ### Yocto Metadata Layer References
@@ -295,7 +309,7 @@ This allows tools to filter components based on their use case:
 - **License compliance**: Include all components regardless of scope
 - **Supply chain tracking**: Include all components regardless of scope
 
-Component scopes are enabled by default and available in both CycloneDX 1.4 and 1.6
+Component scopes are enabled by default and available in both CycloneDX 1.6 and 1.7
 specifications. If you need to disable them (e.g., for compatibility with certain
 SBOM profiles or tools):
 
@@ -306,7 +320,7 @@ CYCLONEDX_ADD_COMPONENT_SCOPES = "0"
 ### Vulnerability Analysis Timestamps
 
 By default, vulnerability analysis records include `firstIssued` and `lastUpdated`
-timestamps when using CycloneDX 1.6. To generate minimal VEX documents without timestamps:
+timestamps when using CycloneDX 1.6 or 1.7. To generate minimal VEX documents without timestamps:
 
 ```sh
 CYCLONEDX_ADD_VULN_TIMESTAMPS = "1"
@@ -455,7 +469,7 @@ To generate a minimal SBOM, disable all optional features:
 INHERIT += "cyclonedx-export"
 
 # Use minimal configuration
-CYCLONEDX_SPEC_VERSION = "1.6"           # or "1.4"
+CYCLONEDX_SPEC_VERSION = "1.6"           # or "1.7"
 CYCLONEDX_RUNTIME_PACKAGES_ONLY = "1"    # Runtime packages only
 CYCLONEDX_ADD_COMPONENT_SCOPES = "0"     # Disable scope marking
 CYCLONEDX_ADD_VULN_TIMESTAMPS = "0"      # Disable VEX timestamps
@@ -467,8 +481,8 @@ This produces the smallest valid CycloneDX SBOM with only essential vulnerabilit
 ### Advanced Configuration Summary
 
 ```sh
-# Specification version (default: "1.4")
-CYCLONEDX_SPEC_VERSION = "1.4"  # or "1.6"
+# Specification version (default: "1.6")
+CYCLONEDX_SPEC_VERSION = "1.6"  # or "1.7"
 
 # Version for metadata.component in the generated SBOM
 # (default: "${DISTRO_VERSION}${IMAGE_VERSION_SUFFIX}")
@@ -484,7 +498,7 @@ CYCLONEDX_RUNTIME_PACKAGES_ONLY = "1"
 # Add component scopes (default: "1")
 CYCLONEDX_ADD_COMPONENT_SCOPES = "1"
 
-# Add vulnerability timestamps in 1.6 (default: "1")
+# Add vulnerability timestamps in 1.6 and 1.7 (default: "1")
 CYCLONEDX_ADD_VULN_TIMESTAMPS = "1"
 
 # Add component licenses (default: "1")
@@ -613,9 +627,21 @@ Thanks for your interest in contributing to `meta-cyclonedx`!
 Please read the dedicated [./CONTRIBUTING.md](CONTRIBUTING.md) file before
 opening issues or pull requests.
 
-Run the default unit suite with `python3 -m pytest`. Maintainers can run
-the kas acceptance matrix with `pytest -m integration`; prerequisites and
-the deployed-artifact checks are described in [docs/testing.md](docs/testing.md).
+### Development
+
+SBOM and VEX document semantics live in the layer's `lib/meta_cyclonedx.py`
+renderer module, which consumes normalized build and artifact facts; the
+`cyclonedx-export` class is a BitBake adapter that collects those facts and
+deploys the documents. The renderer is importable without a Yocto build and
+is covered by a behavioral test suite:
+
+```sh
+python3 -m pytest tests/
+```
+
+Maintainers can run the kas acceptance matrix with `pytest -m integration`;
+prerequisites and the deployed-artifact checks are described in
+[docs/testing.md](docs/testing.md).
 
 ## Known Limitations
 
