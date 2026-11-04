@@ -27,9 +27,13 @@ UUID = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
 
-#: Field names carrying generation-time timestamps (metadata.statement
-#: timestamps, citation/tool timestamps).
-TIMESTAMP_KEYS = frozenset({"timestamp"})
+#: Field names carrying generation-time timestamps: metadata/statement
+#: timestamps, tool timestamps, and VEX analysis issue stamps. A
+#: populate-document rerun re-stamps firstIssued/lastUpdated (they ride
+#: datetime.now() under CYCLONEDX_ADD_VULN_TIMESTAMPS); post-seam every
+#: R3 reruns the populate tasks, since the renderer module rides their
+#: signatures. The issuance time is volatile; statement content is not.
+TIMESTAMP_KEYS = frozenset({"timestamp", "firstIssued", "lastUpdated"})
 
 #: `properties` entries describing the harness working tree, not document
 #: content: the layer revision and its dirty flag at export time. The
