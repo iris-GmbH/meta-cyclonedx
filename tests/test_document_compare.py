@@ -264,3 +264,28 @@ def test_build_datetime_in_the_image_version_compares_equal():
     # are not a 14-digit DATETIME — survive untouched.
     package = {"components": [{"version": "1.36.1-r0"}, {"version": "20250101"}]}
     assert document_compare.canonicalize(package) == package
+
+
+def test_vulnerability_statement_timestamps_compare_equal():
+    # firstIssued/lastUpdated record when a VEX statement was (re-)issued;
+    # populate documents re-stamp them whenever a populate task reruns.
+    # Post-seam that means every R3 run, where the renderer module rides
+    # the populate signatures. The issuance time is volatile; statement
+    # content (state, detail, affects) must survive.
+    a = {"vulnerabilities": [{
+        "id": "CVE-2026-0001",
+        "analysis": {"state": "not_affected", "detail": "STATUS: resolved\n",
+                     "firstIssued": "2026-10-13T08:51:04.532035+00:00",
+                     "lastUpdated": "2026-10-13T08:51:04.532035+00:00"},
+    }]}
+    b = copy.deepcopy(a)
+    issued = b["vulnerabilities"][0]["analysis"]
+    issued["firstIssued"] = "2026-10-13T08:53:57.902082+00:00"
+    issued["lastUpdated"] = "2026-10-13T08:53:57.902082+00:00"
+    assert document_compare.first_difference(
+        document_compare.canonicalize(a), document_compare.canonicalize(b)
+    ) is None
+    issued["state"] = "affected"
+    assert "analysis.state" in document_compare.first_difference(
+        document_compare.canonicalize(a), document_compare.canonicalize(b)
+    )
