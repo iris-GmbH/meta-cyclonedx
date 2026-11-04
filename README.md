@@ -12,7 +12,7 @@ produces [CycloneDX](https://cyclonedx.org/) Software Bill of Materials
 
 This layer generates **CycloneDX** compliant SBOMs with the following features:
 
-- Currently, support for CycloneDX specification 1.7, 1.6, and 1.4
+- Currently, support for CycloneDX specification 1.6 and 1.7
 - Support for multiple supported Yocto (LTS) releases.
 - Improved package matching against the [NIST NVD](https://nvd.nist.gov/) by
   fixing [CPE](https://nvd.nist.gov/products/cpe) generation process.
@@ -70,15 +70,17 @@ By default, meta-cyclonedx generates **CycloneDX 1.6** format SBOMs. You can con
 CYCLONEDX_SPEC_VERSION = "1.6"  # Default - modern format
 # Or for newer features:
 # CYCLONEDX_SPEC_VERSION = "1.7"
-# Or for legacy tools:
-# CYCLONEDX_SPEC_VERSION = "1.4"
 ```
 
 **Version differences:**
 
-- **1.4**: Legacy format for compatibility with older tools
 - **1.6**: Modern format with enhanced metadata and timestamps (default)
 - **1.7**: Latest version with advanced cryptography transparency (CBOM), intellectual property visibility, citations, and improved custom license handling
+
+> **Note**: CycloneDX 1.4 was accepted on this branch before the renderer
+> seam backport and is not accepted anymore. If 1.4 output is mandatory, pin
+> this layer to the pre-backport commit
+> `7dae3e1a44e9f6355fd9985a37bfd3d711d9938b`.
 
 ### Image Component Version
 
@@ -116,8 +118,7 @@ CYCLONEDX_IMAGE_TYPE = "operating-system"
 ```
 
 Possible values depend on the configured CycloneDX specification version.
-For a complete list see [CycloneDX 1.4](https://cyclonedx.org/docs/1.4/json/#metadata_component_type),
-[CycloneDX 1.6](https://cyclonedx.org/docs/1.6/json/#metadata_tools_oneOf_i0_components_items_type),
+For a complete list see [CycloneDX 1.6](https://cyclonedx.org/docs/1.6/json/#metadata_tools_oneOf_i0_components_items_type),
 [CycloneDX 1.7](https://cyclonedx.org/docs/1.7/json/#metadata_tools_oneOf_i0_components_items_type).
 
 ### Yocto Metadata Layer References
@@ -310,7 +311,7 @@ This allows tools to filter components based on their use case:
 - **License compliance**: Include all components regardless of scope
 - **Supply chain tracking**: Include all components regardless of scope
 
-Component scopes are enabled by default and available in both CycloneDX 1.4 and 1.6
+Component scopes are enabled by default and available in both CycloneDX 1.6 and 1.7
 specifications. If you need to disable them (e.g., for compatibility with certain
 SBOM profiles or tools):
 
@@ -583,7 +584,7 @@ To generate a minimal SBOM, disable all optional features:
 INHERIT += "cyclonedx-export"
 
 # Use minimal configuration
-CYCLONEDX_SPEC_VERSION = "1.6"           # or "1.4"
+CYCLONEDX_SPEC_VERSION = "1.6"           # or "1.7"
 CYCLONEDX_RUNTIME_PACKAGES_ONLY = "1"    # Runtime packages only
 CYCLONEDX_ADD_COMPONENT_SCOPES = "0"     # Disable scope marking
 CYCLONEDX_ADD_VULN_TIMESTAMPS = "0"      # Disable VEX timestamps
@@ -596,7 +597,7 @@ This produces the smallest valid CycloneDX SBOM with only essential vulnerabilit
 
 ```sh
 # Specification version (default: "1.6")
-CYCLONEDX_SPEC_VERSION = "1.6"  # or "1.7" or "1.4"
+CYCLONEDX_SPEC_VERSION = "1.6"  # or "1.7"
 
 # Version for metadata.component in the generated SBOM
 # (default: "${DISTRO_VERSION}${IMAGE_VERSION_SUFFIX}")
@@ -728,9 +729,21 @@ Thanks for your interest in contributing to `meta-cyclonedx`!
 Please read the dedicated [./CONTRIBUTING.md](CONTRIBUTING.md) file before
 opening issues or pull requests.
 
-Run the default unit suite with `python3 -m pytest`. Maintainers can run
-the kas acceptance matrix with `pytest -m integration`; prerequisites and
-the deployed-artifact checks are described in [docs/testing.md](docs/testing.md).
+### Development
+
+SBOM and VEX document semantics live in the layer's `lib/meta_cyclonedx.py`
+renderer module, which consumes normalized build and artifact facts; the
+`cyclonedx-export` class is a BitBake adapter that collects those facts and
+deploys the documents. The renderer is importable without a Yocto build and
+is covered by a behavioral test suite:
+
+```sh
+python3 -m pytest tests/
+```
+
+Maintainers can run the kas acceptance matrix with `pytest -m integration`;
+prerequisites and the deployed-artifact checks are described in
+[docs/testing.md](docs/testing.md).
 
 ## Known Limitations
 
