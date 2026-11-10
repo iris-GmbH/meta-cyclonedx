@@ -716,7 +716,7 @@ def strip_credentials(url):
         return url
     return urllib.parse.urlunsplit((scheme, netloc.partition("@")[2], path, query, fragment))
 
-def get_layer_public_remote_url(layer_path, layer_name):
+def get_layer_public_remote_url(d, layer_path, layer_name):
     """
     Get the remote url of a layer with the credentials stripped.
     If this fails, raise a RuntimeError with the "cyclonedx-export" prefix and
@@ -739,9 +739,13 @@ def get_layer_public_remote_url(layer_path, layer_name):
     if not remote_url:
         raise RuntimeError(f"cyclonedx-export: layer {layer_name} has no resolvable remote url")
 
+    # SCP-style remotes (user@host:path) are not URIs; rewrite them to
+    # ssh:// form first, so that credential stripping sees a real authority.
+    vcs_url = _cyclonedx_renderer(d).normalize_vcs_url(remote_url)
+
     # Credentials in a remote url are not publishable; keep the host/path.
-    public_remote_url = strip_credentials(remote_url)
-    if public_remote_url != remote_url:
+    public_remote_url = strip_credentials(vcs_url)
+    if public_remote_url != vcs_url:
         bb.warn(f"cyclonedx-export: stripped credentials from the remote url of layer {layer_name}")
     return public_remote_url
 
@@ -765,7 +769,7 @@ def image_purl_facts(d):
     if not layer_version or layer_version == "<unknown>":
         layer_version = None
     try:
-        repository_url = get_layer_public_remote_url(layer_path, source_layer["name"])
+        repository_url = get_layer_public_remote_url(d, layer_path, source_layer["name"])
     except RuntimeError as e:
         if not str(e).startswith("cyclonedx-export"):
             raise
@@ -785,7 +789,7 @@ def generate_layer_references(d):
     layers = oe.buildcfg.get_layer_revisions(d)
     for (path, name, branch, rev, ismodified) in layers:
         try:
-            public_remote_url = get_layer_public_remote_url(path, name)
+            public_remote_url = get_layer_public_remote_url(d, path, name)
         except RuntimeError as e:
             if not str(e).startswith("cyclonedx-export"):
                 raise

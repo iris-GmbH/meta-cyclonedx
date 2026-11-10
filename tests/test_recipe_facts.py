@@ -9,6 +9,40 @@ import meta_cyclonedx
 from helpers import PLACEHOLDER
 
 
+def test_scp_style_git_remote_becomes_ssh_uri():
+    assert meta_cyclonedx.normalize_vcs_url(
+        "git@ssh.dev.azure.com:v3/org/project/repo") == (
+            "ssh://git@ssh.dev.azure.com/v3/org/project/repo")
+
+
+def test_existing_vcs_uri_is_unchanged():
+    url = "https://example.org/group/repo.git"
+    assert meta_cyclonedx.normalize_vcs_url(url) == url
+
+
+def test_scp_style_git_remote_path_is_uri_encoded():
+    assert meta_cyclonedx.normalize_vcs_url(
+        "git@example.org:group/repo with space.git") == (
+            "ssh://git@example.org/group/repo%20with%20space.git")
+
+
+def test_scp_style_git_remote_without_user_becomes_ssh_uri():
+    assert meta_cyclonedx.normalize_vcs_url(
+        "example.org:group/repo with space.git") == (
+            "ssh://example.org/group/repo%20with%20space.git")
+
+
+def test_scp_style_git_remote_keeps_userinfo_for_credential_stripping():
+    assert meta_cyclonedx.normalize_vcs_url(
+        "user:secret@example.org:group/repo.git") == (
+            "ssh://user:secret@example.org/group/repo.git")
+
+
+def test_local_git_remote_path_is_unchanged():
+    for url in ("/srv/git/meta-test", "./mirror/meta-test:v1"):
+        assert meta_cyclonedx.normalize_vcs_url(url) == url
+
+
 def test_one_identity_per_cve_product_alias():
     pkgs = meta_cyclonedx.component_identity("libfoo foo", "1.2", "-", "pkg:yocto/foo@1.2")
 

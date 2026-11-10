@@ -231,6 +231,34 @@ def normalize_cve_id(cve_id):
     return cve_id
 
 
+def normalize_vcs_url(url):
+    """
+    Convert SCP-style Git remotes into valid SSH URI form.
+
+    Follows git's own rule: a remote containing "://" is already a URL, and
+    one with a ':' before the first '/' is SCP-like ([user@]host:path).
+    urlsplit() cannot make that distinction, as it reads "host:path" and
+    "user:password@host:path" as having a URL scheme.
+    """
+    from urllib.parse import quote, urlunsplit
+
+    if "://" in url:
+        return url
+
+    match = re.match(
+        r"^(?:(?P<user>[^/@\s]+)@)?(?P<host>\[[^\]]+\]|[^:/\s]+):(?P<path>.+)$",
+        url,
+    )
+    if not match:
+        return url
+
+    authority = match.group("host")
+    if match.group("user"):
+        authority = f"{match.group('user')}@{authority}"
+    path = quote(match.group("path"), safe="/@:!$&'()*+,;=-._~")
+    return urlunsplit(("ssh", authority, f"/{path.lstrip('/')}", "", ""))
+
+
 def add_status_vex_statement(cve, cves, bom_ref, recipe, placeholder,
                              add_timestamps, log=None):
     """
