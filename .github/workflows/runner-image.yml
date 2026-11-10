@@ -31,9 +31,10 @@ jobs:
           kas_tag="$(git -C tools/kas describe --tags --exact-match)"
           runner_version="$(sed -n 's/^ARG RUNNER_VERSION=\([^[:space:]]*\).*/\1/p' \
             .github/runner-image/Dockerfile)"
+          repository="${GITHUB_REPOSITORY,,}"
           echo "kas_tag=${kas_tag#v}" >> "$GITHUB_OUTPUT"
           echo "runner_version=${runner_version}" >> "$GITHUB_OUTPUT"
-          echo "name=ghcr.io/${GITHUB_REPOSITORY}/kas-runner:${kas_tag#v}-${runner_version}" \
+          echo "name=ghcr.io/${repository}/kas-runner:${kas_tag#v}-${runner_version}" \
             >> "$GITHUB_OUTPUT"
       - name: Build
         run: |
