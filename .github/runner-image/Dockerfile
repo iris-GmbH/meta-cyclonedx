@@ -23,10 +23,14 @@ ARG RUNNER_ARCH=x64
 # pytest runs the harness; jsonschema validates the deployed documents
 # (the integration layer's only extra dependency); ICU and OpenSSL back
 # the runner's .NET host.
+USER root
+
 RUN apt-get update && \
     apt-get install --no-install-recommends -y \
         python3-pytest python3-jsonschema libicu-dev libssl-dev && \
     rm -rf /var/log/* /var/tmp/* /var/cache/apt/archives
+
+USER builder
 
 # The Actions runner binary, owned by the image's build user (BitBake
 # refuses to run as root). Registration/scale-set wiring stays
@@ -35,7 +39,6 @@ RUN curl -fSsL -o /tmp/actions-runner.tar.gz \
         "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-${RUNNER_ARCH}-${RUNNER_VERSION}.tar.gz" && \
     mkdir -p /builder/actions-runner && \
     tar -xzf /tmp/actions-runner.tar.gz -C /builder/actions-runner && \
-    rm /tmp/actions-runner.tar.gz && \
-    chown -R builder:builder /builder/actions-runner
+    rm /tmp/actions-runner.tar.gz
 
 WORKDIR /builder
