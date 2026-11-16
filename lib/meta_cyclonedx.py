@@ -694,6 +694,36 @@ def render(facts):
     return {"sbom": sbom, "vex": vex}
 
 
+def merge_kernel_cves(sbom, vex, kernel_pn, not_affected, log=None):
+    """
+    Add not_affected statements for kernel CVEs whose affected files were
+    never compiled to the VEX of a rendered SBOM.
+
+    not_affected maps CVE ids to their detail text. Statements affect every
+    component of the kernel recipe, matched by its recipe purl; pairs the VEX
+    already covers are skipped. The VEX is modified in place; returns the
+    number of added statements.
+    """
+    serial = sbom["serialNumber"].split(":")[-1]
+    refs = sorted({component["bom-ref"] for component in sbom.get("components", [])
+                   if component.get("purl", "").startswith("pkg:yocto/")
+                   and component["purl"].split("/")[-1].split("@")[0] == kernel_pn})
+    if not refs:
+        _log(log, 1, f"No SBOM component for the kernel recipe {kernel_pn}")
+        return 0
+
+    covered = {(v["id"], a["ref"]) for v in vex.get("vulnerabilities", []) for a in v.get("affects", [])}
+    added = 0
+    for cve_id in sorted(not_affected):
+        uncovered = [r for r in refs if (cve_id, f"urn:cdx:{serial}/1#{r}") not in covered]
+        if not uncovered:
+            continue
+        vex.setdefault("vulnerabilities", []).append(
+            kernel_vex_statement(cve_id, uncovered, serial, not_affected[cve_id]))
+        added += 1
+    return added
+
+
 def merge_sbom_cve_check(sbom, vex, report, config, log=None):
     """
     Map a completed sbom-cve-check report onto the VEX document.
