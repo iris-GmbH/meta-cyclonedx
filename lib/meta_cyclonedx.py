@@ -39,7 +39,9 @@ fragments             per-recipe normalized facts, keyed by recipe name, in
                       the on-disk partial-SBOM format written by
                       do_populate_cyclonedx: "pkgs", "cves", "dependencies",
                       "bom_ref_dedup_map", "extra_components",
-                      "extra_dependencies", "extra_roots"
+                      "extra_dependencies", "extra_roots"; the kernel recipe
+                      also carries "kernel_cve" for the image-level kernel
+                      CVE filtering, which the renderer ignores
 runtime_recipes       recipe names whose components are "required"
 image_install_recipes recipe names installed by image author intent; their
                       components hang directly off the graph root
