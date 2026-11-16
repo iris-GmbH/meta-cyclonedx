@@ -139,7 +139,10 @@ For a complete list see [CycloneDX 1.6](https://cyclonedx.org/docs/1.6/json/#met
 
 The layers that have a git remote url are added to the `externalReferences` of
 the top-level image component in metadata by default. The `url` of the external
-reference is in the format `{remote_url}@{revision}`.
+reference is in the format `{remote_url}@{revision}`; a remote configured as
+scp-style git shorthand (`user@host:path`) becomes the equivalent
+`ssh://user@host/path` `{remote_url}`, so the reference passes schema
+validation.
 Layers for which no git remote url can be resolved are skipped with a warning.
 Credentials embedded in a resolved remote url are stripped from the reference
 and its properties. Layer references use the CycloneDX `vcs` external reference

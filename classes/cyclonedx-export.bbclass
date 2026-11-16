@@ -647,6 +647,10 @@ def generate_layer_references(d):
         if public_remote_url != remote_url:
             bb.warn(f"cyclonedx-export: stripped credentials from the remote url of layer {name}")
 
+        # scp-style remotes ("git@host:path") are not URIs and would not pass
+        # schema validation; publish the equivalent ssh:// url instead.
+        public_remote_url = _cyclonedx_renderer(d).git_url_as_uri(public_remote_url)
+
         reference = {
             "url": f"{public_remote_url}@{rev}",
             "type": "vcs",
