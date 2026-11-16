@@ -1211,7 +1211,7 @@ def write_cyclonedx_image_data(d, sbom, vex):
     # explicitly so disabling sbom-cve-check cannot pick up a stale result.
     write_json(os.path.join(imagedata_dir, "manifest.json"), {
         "sbom": "bom.json",
-        "vex": "sbom-cve-check/vex.json" if cyclonedx_sbom_cve_check_enabled(d) else "vex.json",
+        "vex": "sbom-cve-check/vex.json" if cyclonedx_checked_vex_enabled(d) else "vex.json",
     })
 
 def export_cyclonedx(d):
@@ -1381,7 +1381,7 @@ def export_cyclonedx(d):
             target = Path(target).relative_to(os.path.dirname(link_name))
             os.symlink(target, link_name)
     make_deploy_symlink(export_sbom, get_cyclonedx_export_path("CYCLONEDX_EXPORT_SBOM_LINK"))
-    if not cyclonedx_sbom_cve_check_enabled(d):
+    if not cyclonedx_checked_vex_enabled(d):
         make_deploy_symlink(export_vex, get_cyclonedx_export_path("CYCLONEDX_EXPORT_VEX_LINK"))
 
 python do_export_cyclonedx() {
@@ -1421,7 +1421,7 @@ python () {
     if bb.data.inherits_class("image", d):
         bb.build.addtask("do_deploy_cyclonedx", "do_image_complete", "do_rootfs", d)
         complete_after = "do_deploy_cyclonedx"
-        if cyclonedx_sbom_cve_check_enabled(d):
+        if cyclonedx_checked_vex_enabled(d):
             complete_after = "do_cyclonedx_sbom_cve_check"
             bb.build.addtask("do_cyclonedx_sbom_cve_check", "do_build", "do_sbom_cve_check do_deploy_cyclonedx", d)
         elif d.getVar("CYCLONEDX_INCLUDE_UNPATCHED_VULNS") == "1":
@@ -1433,7 +1433,7 @@ python () {
                 d.appendVarFlag("do_rootfs", "depends", f" {img}:do_cyclonedx_complete")
 }
 
-def cyclonedx_sbom_cve_check_enabled(d):
+def cyclonedx_checked_vex_enabled(d):
     return bb.data.inherits_class("image", d) and bb.data.inherits_class("sbom-cve-check", d)
 
 
