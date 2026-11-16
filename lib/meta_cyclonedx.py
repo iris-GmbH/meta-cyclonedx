@@ -74,6 +74,38 @@ SUPPORTED_IMAGE_TYPES = [
 ]
 
 
+#: A url that already carries a scheme is a URI and needs no rewrite.
+_URL_SCHEME_PREFIX = re.compile(r"[a-zA-Z][a-zA-Z0-9+.\-]*://")
+
+#: Git's scp-style remote shorthand "[user@]host:path". The host excludes
+#: single-character names: "C:/work/repo" is a Windows drive path, not host
+#: "C" (Git itself refuses one-character hosts).
+_SCP_STYLE_URL = re.compile(
+    r"(?:(?P<user>[^@\s/:]+)@)?(?P<host>[^/\s:]{2,}):(?P<path>.+)"
+)
+
+
+def git_url_as_uri(url):
+    """
+    Return a git remote url in URI form.
+
+    Git's scp-style remote shorthand ("[user@]host:path", e.g.
+    "git@ssh.example.org:repo/meta-test.git") names no transport and
+    separates host from path with a colon, so it is not a URI and cannot be
+    published in an external reference url. Rewrite it to the equivalent ssh
+    URI ("ssh://[user@]host/path"), mirroring the transport Git itself
+    selects; values that already carry a scheme, and local paths of any
+    kind, are returned unchanged.
+    """
+    if _URL_SCHEME_PREFIX.match(url):
+        return url
+    match = _SCP_STYLE_URL.fullmatch(url)
+    if match is None:
+        return url
+    userinfo = f"{match['user']}@" if match["user"] else ""
+    return f"ssh://{userinfo}{match['host']}/{match['path'].lstrip('/')}"
+
+
 def config_errors(spec_version, image_type):
     """
     Validate renderer-relevant configuration and return a human-readable
