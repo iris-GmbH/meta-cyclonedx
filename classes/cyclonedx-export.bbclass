@@ -260,9 +260,17 @@ python do_populate_cyclonedx() {
         pn_list["pkgs"].append(pkg)
         bom_ref = pkg["bom-ref"]
 
-        # append any CVEs either patched or taken from CVE_STATUS
+        # append any CVEs either patched or taken from CVE_STATUS.
+        # get_patched_cves() keys patch files by the bare CVE id read from the
+        # file name and CVE_STATUS entries verbatim, so one CVE can arrive under
+        # several ids. The renderer states the first entry it sees per normalized
+        # id and only notes the others, so the CVE_STATUS entries must be stated
+        # first; otherwise their state and justification decay into an
+        # "Additional patch" line. Patch-derived entries are the ones OE gives a
+        # resource list. The sort is stable, so both groups keep their order.
         patched_cves = get_patched_cves(d)
-        for cve_id, cve_info in patched_cves.items():
+        for cve_id, cve_info in sorted(patched_cves.items(),
+                                       key=lambda item: "resource" in item[1]):
             cve = (
                 cve_id,
                 cve_info["abbrev-status"],
