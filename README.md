@@ -154,6 +154,8 @@ recipe and will also include the layername if available.
 Additionally, the layer revision and remote url will be included as qualifiers
 if they can be resolved for the layer.
 Credentials embedded in the resolved remote url are stripped.
+A remote url configured as scp-style git shorthand (`user@host:path`) is
+published in its equivalent `ssh://user@host/path` url form.
 See the [Yocto Definition in the PURL Specification](https://github.com/package-url/purl-spec/blob/ebbeb6fd2f391cd786e6ce075c9cb78ef3ca4bf5/types/yocto-definition.json#L46)
 for reference.
 
@@ -161,7 +163,10 @@ for reference.
 
 The layers that have a git remote url are added to the `externalReferences` of
 the top-level image component in metadata by default. The `url` of the external
-reference is in the format `{remote_url}@{revision}`.
+reference is in the format `{remote_url}@{revision}`; a remote configured as
+scp-style git shorthand (`user@host:path`) becomes the equivalent
+`ssh://user@host/path` `{remote_url}`, so the reference passes schema
+validation.
 Layers for which no git remote url can be resolved are skipped with a warning.
 Credentials embedded in a resolved remote url are stripped from the reference
 and its properties. Layer references use the CycloneDX `vcs` external reference
