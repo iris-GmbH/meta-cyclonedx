@@ -280,8 +280,14 @@ python do_populate_cyclonedx() {
             # justification are kept instead of being replaced by "fix-file-included".
             patched_cves = get_patched_cves(d)
             cve_status = d.getVarFlags("CVE_STATUS") or {}
-            status_patched = {c for c in cve_status if decode_cve_status(d, c)[0] == "Patched"}
-            for cve_id in sorted(patched_cves - status_patched):
+            # Compare normalized ids: get_patched_cves() reports the bare CVE id
+            # of a patch file name, while a CVE_STATUS entry can be keyed with a
+            # patch file suffix, and the renderer deduplicates by normalized id.
+            status_patched = {renderer.normalize_cve_id(c)
+                              for c in cve_status
+                              if decode_cve_status(d, c)[0] == "Patched"}
+            for cve_id in sorted(c for c in patched_cves
+                                 if renderer.normalize_cve_id(c) not in status_patched):
                 cve = (
                     cve_id,
                     "Patched",
