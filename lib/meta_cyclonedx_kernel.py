@@ -149,6 +149,30 @@ def affected_c_files(record, paths):
     return files or None
 
 
+def _valid_cpe_applicability(record):
+    """Require nonempty version-match containers before calling OE's matcher."""
+    applicability = record["containers"]["cna"].get("cpeApplicability")
+    if not isinstance(applicability, list) or not applicability:
+        return False
+    for configuration in applicability:
+        if not isinstance(configuration, dict) or not configuration:
+            return False
+        for nodes in configuration.values():
+            if not isinstance(nodes, list) or not nodes:
+                return False
+            for node in nodes:
+                if not isinstance(node, dict):
+                    return False
+                matches = node.get("cpeMatch")
+                if not isinstance(matches, list) or not matches:
+                    return False
+                if any(not isinstance(match, dict)
+                       or not isinstance(match.get("vulnerable"), bool)
+                       for match in matches):
+                    return False
+    return True
+
+
 def find_exclusions(datadir, compiled_sources, paths, version, matcher,
                     protected_ids=(), log=lambda level, message: None):
     """Return candidate CVE IDs/details; leave every uncertain case unchanged.
@@ -198,6 +222,9 @@ def find_exclusions(datadir, compiled_sources, paths, version, matcher,
             continue
         affected = affected_c_files(record, paths)
         if not affected or any(physical in compiled for _, physical in affected):
+            continue
+        if not _valid_cpe_applicability(record):
+            log(2, prefix + "retaining %s: missing or malformed CVE version metadata" % cve_id)
             continue
         # OE's matcher expects well-formed CVE version metadata. Limit handling
         # of malformed data to this boundary so local assessment errors surface.

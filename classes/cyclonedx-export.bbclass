@@ -245,6 +245,24 @@ def get_kernel_compiled_sources(d):
         if binary.endswith('.ko') and not sources:
             raise ValueError('no debug sources for module %s; check debug information '
                              'and whether packaging skips signed modules' % binary)
+    # Compressed, stripped or skipped modules may have no inventory entry at
+    # all. Check the packaged files as well, not just the entries OE recorded.
+    package_dir = d.getVar('PKGD')
+    if not package_dir or not os.path.isdir(package_dir):
+        raise ValueError('cannot inspect packaged modules; keep the do_package output available')
+
+    def walk_error(error):
+        raise error
+
+    for directory, subdirs, filenames in os.walk(package_dir, onerror=walk_error):
+        subdirs[:] = [name for name in subdirs if name != '.debug']
+        for filename in filenames:
+            if not filename.endswith(('.ko', '.ko.gz', '.ko.xz', '.ko.zst')):
+                continue
+            binary = os.path.relpath(os.path.join(directory, filename), package_dir)
+            if not source_info.get(binary):
+                raise ValueError('no debug sources for packaged module %s; disable module '
+                                 'compression and ensure every module has debug information' % binary)
     return {source for sources in source_info.values() for source in sources}
 
 def kernel_cve_filter_prerequisite_error(d):
@@ -334,6 +352,7 @@ python do_populate_cyclonedx() {
     pn_list = {}
     pn_list["pkgs"] = []
     cves = []
+    # Collect recipe-level patch and CVE_STATUS decisions once for all components.
     patched_cves = get_patched_cves(d)
 
     # Track duplicate bom-refs that map to the same CPE

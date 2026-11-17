@@ -41,6 +41,10 @@ version matcher (requires Python `packaging`):
 COREBASE=/path/to/poky python3 -m pytest -q tests/test_kernel_cve.py
 ```
 
+The unit regressions cover missing packaged-module debug records (including
+compressed modules), malformed applicability metadata and explicit-status
+precedence over patch-derived aliases.
+
 ## Kernel CVE filter acceptance build
 
 Run the kernel/module scenario alone, or as part of `pytest -m integration`:

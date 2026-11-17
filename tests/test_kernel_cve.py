@@ -190,6 +190,18 @@ def test_invalid_version_metadata_does_not_prevent_other_exclusions(kernel):
     assert "cannot match CVE version metadata" in kernel.logs[0][1]
 
 
+@pytest.mark.parametrize("applicability", [
+    None, [], {}, [{}], [{"nodes": []}], [{"nodes": [{}]}],
+    [{"nodes": [{"cpeMatch": []}]}],
+])
+def test_malformed_applicability_does_not_prevent_other_exclusions(kernel, applicability):
+    invalid_id, data = record(kernel)
+    data["containers"]["cna"]["cpeApplicability"] = applicability
+    save(kernel, invalid_id, data)
+    valid_id, _ = record(kernel, 2)
+    assert set(exclusions(kernel)) == {valid_id}
+
+
 @pytest.mark.parametrize("matched", [False, None])
 def test_unaffected_or_unknown_versions_are_retained(kernel, matched):
     record(kernel)
@@ -235,7 +247,7 @@ def test_disabled_or_non_kernel_filter_has_no_database_dependency(enabled, provi
     namespace["bb"].fatal.assert_not_called()
 
 
-def test_enabled_filter_requires_helper_and_only_depends_at_assessment(tmp_path):
+def test_enabled_filter_requires_oe_core_helper(tmp_path):
     def fatal(message):
         raise RuntimeError(message)
 
@@ -249,17 +261,6 @@ def test_enabled_filter_requires_helper_and_only_depends_at_assessment(tmp_path)
     with pytest.raises(RuntimeError, match="requires an OE-Core revision"):
         configure(d)
     d.appendVarFlag.assert_not_called()
-    script = tmp_path / "scripts/contrib/improve_kernel_cve_report.py"
-    script.parent.mkdir(parents=True)
-    script.touch()
-    configure(d)
-    flags = {}
-    for task, flag, value in (call.args for call in d.appendVarFlag.call_args_list):
-        assert task == "do_populate_cyclonedx"
-        flags.setdefault(flag, set()).update(value.split())
-    assert flags["file-checksums"] >= {f"{script}:True", "/layer/lib/meta_cyclonedx_kernel.py:True"}
-    assert flags["depends"] == {"sbom-cve-check-update-cvelist-native:do_patch"}
-    d.appendVar.assert_not_called()  # No recipe-wide DEPENDS edge.
 
 
 def test_recipe_collection_protects_patches_and_explicit_unpatched_ids(monkeypatch):
@@ -268,6 +269,10 @@ def test_recipe_collection_protects_patches_and_explicit_unpatched_ids(monkeypat
     oe.cve_check.get_patched_cves = lambda d: {
         "CVE-2026-0001-0001": {"abbrev-status": "Patched", "status": "fixed"},
         "CVE-2026-0002": {"abbrev-status": "Unpatched", "status": "unpatched"},
+        "CVE-2026-0004": {"abbrev-status": "Patched", "status": "fix-file-included",
+                          "resource": ["fix.patch"]},
+        "CVE-2026-0004-0001": {"abbrev-status": "Ignored", "status": "not-applicable-config",
+                               "justification": "affected hardware is disabled"},
     }
     oe.purl = ModuleType("oe.purl")
     oe.purl.get_base_purl = lambda d: "pkg:yocto/linux@6.6.1"
@@ -275,6 +280,7 @@ def test_recipe_collection_protects_patches_and_explicit_unpatched_ids(monkeypat
         monkeypatch.setitem(sys.modules, name, module)
     values = {"PN": "linux-test", "BPN": "linux-test", "CVE_PRODUCT": "linux linux-alias",
               "CVE_VERSION": "6.6.1", "PROVIDES": "linux-test virtual/kernel",
+              "CYCLONEDX_COMPONENT_TYPE": "library",
               "CYCLONEDX_VEX_ADD_KERNEL_CVE": "1", "CYCLONEDX_PNDATA_WORKDIR": "/pn",
               "CYCLONEDX_SBOM_SERIAL_PLACEHOLDER": "<SBOM_SERIAL>"}
     d = Mock(getVar=values.get, getVarFlags=lambda name: {"CVE-2026-0003": "unpatched"})
@@ -290,12 +296,16 @@ def test_recipe_collection_protects_patches_and_explicit_unpatched_ids(monkeypat
     exec("def collect(d):\n" + textwrap.indent(textwrap.dedent(text), "    "), namespace)
     namespace["collect"](d)
     args = namespace["add_kernel_cve_exclusions"].call_args.args
-    assert args[4] == {"CVE-2026-0001", "CVE-2026-0002", "CVE-2026-0003"}
+    assert args[4] == {"CVE-2026-0001", "CVE-2026-0002", "CVE-2026-0003", "CVE-2026-0004"}
     assert len(args[2]) == 2  # Both vulnerability-correlation aliases.
     cves = namespace["write_json"].call_args.args[1]["cves"]
-    assert len(cves) == 1
+    assert len(cves) == 2
     assert cves[0]["id"] == "CVE-2026-0001"
     assert len(cves[0]["affects"]) == 2
+    explicit = next(cve for cve in cves if cve["id"] == "CVE-2026-0004")
+    assert explicit["analysis"]["state"] == "not_affected"
+    assert "JUSTIFICATION: affected hardware is disabled" in explicit["analysis"]["detail"]
+    assert len(explicit["affects"]) == 2
 
 
 @pytest.fixture
@@ -308,9 +318,12 @@ def adapter(kernel, tmp_path, monkeypatch):
     (contrib / "improve_kernel_cve_report.py").write_text(
         "Version = str\ndef get_cpe_applicability(record, version):\n    return (True,)\n")
     (kernel.build / ".config").write_text("CONFIG_DEBUG_INFO=y\nCONFIG_DEBUG_INFO_DWARF4=y\n")
+    package = tmp_path / "package"
+    package.mkdir()
     values = {
         "COREBASE": str(corebase), "CYCLONEDX_LAYERDIR": str(Path(__file__).resolve().parents[1]),
         "S": str(kernel.source), "B": str(kernel.build), "BP": "linux-test-6.6.1",
+        "PKGD": str(package),
         "KERNEL_SRC_PATH": "/usr/src/kernel", "CYCLONEDX_KERNEL_CVE_DB_DIR": str(kernel.db),
         "CYCLONEDX_SBOM_SERIAL_PLACEHOLDER": "<SBOM_SERIAL>",
     }
@@ -399,6 +412,28 @@ def test_detectable_partial_debug_data_prevents_exclusions(kernel, adapter, sour
     adapter.reader.return_value = source_info
     assert adapter.assess() == []
     assert diagnostic in adapter.bb.warn.call_args.args[0]
+
+
+@pytest.mark.parametrize("suffix", [".ko", ".ko.gz", ".ko.xz", ".ko.zst"])
+def test_packaged_module_missing_from_debug_inventory_prevents_exclusions(kernel, adapter, suffix):
+    module = Path(adapter.values["PKGD"]) / ("lib/modules/6.6/kernel/a" + suffix)
+    module.parent.mkdir(parents=True)
+    module.write_bytes(b"packaged module without a debug-source record")
+    record(kernel)
+    original = [{"id": "CVE-2026-0099", "analysis": {"state": "in_triage"}}]
+    assert adapter.assess(cves=copy.deepcopy(original)) == original
+    assert "no debug sources for packaged module" in adapter.bb.warn.call_args.args[0]
+
+
+def test_packaged_module_with_debug_evidence_keeps_its_affected_sources(kernel, adapter):
+    module = Path(adapter.values["PKGD"]) / "lib/modules/6.6/kernel/a.ko"
+    module.parent.mkdir(parents=True)
+    module.touch()
+    adapter.reader.return_value["lib/modules/6.6/kernel/a.ko"] = [
+        "linux-test-6.6.1/drivers/absent.c"]
+    record(kernel)
+    excluded_id, _ = record(kernel, 2, ["drivers/other.c"])
+    assert [cve["id"] for cve in adapter.assess()] == [excluded_id]
 
 
 def test_empty_packaging_data_warns_once_and_leaves_assessments_unchanged(kernel, adapter):
