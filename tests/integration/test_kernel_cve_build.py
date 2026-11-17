@@ -39,7 +39,7 @@ def kernel_cve_runs(container_runtime):
         record = recorder.invoke(
             "kernel-cve-" + name, config=CONFIG,
             extra_env={"CYCLONEDX_VEX_ADD_KERNEL_CVE": enabled,
-                       "CYCLONEDX_KERNEL_CVE_DB_SRCREV": revision},
+                       "KERNEL_CVE_TEST_DB_REVISION": revision},
         )
         capture = kas_env.WORKSPACE / "kernel-cve-evidence" / name
         capture.mkdir(parents=True, exist_ok=True)
@@ -134,6 +134,8 @@ def test_database_revision_refreshes_assessment_without_kernel_recompilation(ker
     assert ADDED not in statements(before)
     assert set(statements(after)) == {EXCLUDED, PATCHED, IGNORED, ADDED}
     tasks = after.record.reran_tasks
+    assert any("/sbom-cve-check-update-cvelist-native_" in task and task.endswith(":do_patch")
+               for task in tasks), after.record.output_tail
     assert any("/linux-yocto_" in task and task.endswith(":do_populate_cyclonedx")
                for task in tasks), after.record.output_tail
     assert not any("/linux-yocto_" in task and task.endswith(":do_compile")

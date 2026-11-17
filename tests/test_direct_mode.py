@@ -27,7 +27,7 @@ def test_direct_mode_launch_is_a_plain_kas_invocation():
 def test_kernel_profile_and_its_switches_reach_the_build(engine):
     config = "tests/integration/kas/kernel-cve.yml"
     settings = {"CYCLONEDX_VEX_ADD_KERNEL_CVE": "1",
-                "CYCLONEDX_KERNEL_CVE_DB_SRCREV": "0000000000000000000000000000000000000002"}
+                "KERNEL_CVE_TEST_DB_REVISION": "0000000000000000000000000000000000000002"}
     command, env = kas_env.kas_invocation(engine, settings, config=config)
     assert command[-2:] == ["build", config]
     if engine == kas_env.KAS_DIRECT:
@@ -35,7 +35,7 @@ def test_kernel_profile_and_its_switches_reach_the_build(engine):
     else:
         assert env == {}
         assert "-e CYCLONEDX_VEX_ADD_KERNEL_CVE=1" in command
-        assert "-e CYCLONEDX_KERNEL_CVE_DB_SRCREV=" + settings["CYCLONEDX_KERNEL_CVE_DB_SRCREV"] in command
+        assert "-e KERNEL_CVE_TEST_DB_REVISION=" + settings["KERNEL_CVE_TEST_DB_REVISION"] in command
 
 
 def test_explicit_container_runtime_options_are_forwarded(monkeypatch):

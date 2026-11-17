@@ -258,7 +258,7 @@ def test_enabled_filter_requires_helper_and_only_depends_at_assessment(tmp_path)
         assert task == "do_populate_cyclonedx"
         flags.setdefault(flag, set()).update(value.split())
     assert flags["file-checksums"] >= {f"{script}:True", "/layer/lib/meta_cyclonedx_kernel.py:True"}
-    assert "cyclonedx-cvelist-native:do_populate_sysroot" in flags["depends"]
+    assert flags["depends"] == {"sbom-cve-check-update-cvelist-native:do_patch"}
     d.appendVar.assert_not_called()  # No recipe-wide DEPENDS edge.
 
 

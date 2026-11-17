@@ -39,8 +39,8 @@ CYCLONEDX_UNPATCHED_VULNS_STATE ??= "in_triage"
 # Only applies to whichever recipe provides virtual/kernel.
 CYCLONEDX_VEX_ADD_KERNEL_CVE ??= "0"
 
-require conf/cyclonedx-kernel-cve.inc
-CYCLONEDX_KERNEL_CVE_DB_DIR ?= "${STAGING_DATADIR_NATIVE}/cyclonedx/cvelist"
+require conf/sbom-cve-check-config.inc
+CYCLONEDX_KERNEL_CVE_DB_DIR ?= "${SBOM_CVE_CHECK_DEPLOY_DB_DIR}/cvelist/cves"
 
 CYCLONEDX_RUNTIME_PACKAGES_ONLY ??= "1"
 
@@ -215,10 +215,11 @@ def configure_kernel_cve_filter(d):
     d.appendVarFlag('do_populate_cyclonedx', 'file-checksums',
                    ' %s:True %s/lib/meta_cyclonedx_kernel.py:True' %
                    (script, d.getVar('CYCLONEDX_LAYERDIR')))
-    # A task dependency stages the native data for assessment only. Putting
-    # this in DEPENDS would invalidate kernel compilation on database updates.
+    # Reuse OE-Core's unpacked CVE List, also consumed by sbom-cve-check.
+    # Keep the dependency on assessment only: DEPENDS would invalidate kernel
+    # compilation on database updates. The upstream recipe has no sysroot task.
     d.appendVarFlag('do_populate_cyclonedx', 'depends',
-                   ' cyclonedx-cvelist-native:do_populate_sysroot')
+                   ' sbom-cve-check-update-cvelist-native:do_patch')
 
 def cyclonedx_is_kernel(d):
     # PROVIDES works even when there is no explicit preferred provider. BitBake

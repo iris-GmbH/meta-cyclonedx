@@ -32,9 +32,11 @@ python do_populate_cyclonedx:append() {
         'dummy_source_present': mentions(dummy, 'drivers/net/dummy.c'),
         'fixture_sources_exist': all(Path(d.getVar('S'), 'drivers/cyclonedx-test', name).is_file()
                                      for name in ('absent.c', 'absent.h', 'absent.S')),
-        'database_in_graph': any(dep[0] == 'cyclonedx-cvelist-native' for dep in taskdeps.values()),
-        'database_revision': d.getVar('CYCLONEDX_KERNEL_CVE_DB_SRCREV'),
+        'database_in_graph': any(dep[0] == 'sbom-cve-check-update-cvelist-native' for dep in taskdeps.values()),
+        'database_revision': d.getVar('KERNEL_CVE_TEST_DB_REVISION'),
     }
     Path(d.getVar('CYCLONEDX_PNDATA_WORKDIR'), 'linux-yocto.kernel-cve-evidence.json').write_text(json.dumps(evidence))
 }
-do_populate_cyclonedx[vardepsexclude] += "BB_TASKDEPDATA"
+# Evidence must not itself invalidate assessment when the fixture DB changes.
+# The production task dependency must carry that change into the task hash.
+do_populate_cyclonedx[vardepsexclude] += "BB_TASKDEPDATA KERNEL_CVE_TEST_DB_REVISION"

@@ -11,7 +11,7 @@ repos:
 
 env:
   CYCLONEDX_VEX_ADD_KERNEL_CVE: "1"
-  CYCLONEDX_KERNEL_CVE_DB_SRCREV: "0000000000000000000000000000000000000001"
+  KERNEL_CVE_TEST_DB_REVISION: "0000000000000000000000000000000000000001"
 
 local_conf_header:
   kernel-cve-tests: |
@@ -19,5 +19,5 @@ local_conf_header:
     CORE_IMAGE_EXTRA_INSTALL += "kernel-module-dummy"
     # The matcher needs the configured build and source trees. On a clean
     # workspace, exercise real packaging instead of restored kernel outputs.
-    RM_WORK_EXCLUDE += "linux-yocto cyclonedx-cvelist-native"
+    RM_WORK_EXCLUDE += "linux-yocto"
     SSTATE_SKIP_CREATION:pn-linux-yocto = "1"

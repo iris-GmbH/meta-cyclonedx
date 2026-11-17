@@ -50,8 +50,8 @@ python3 -m pytest -m integration tests/integration/test_kernel_cve_build.py
 ```
 
 The `tests/integration/kas/kernel-cve.yml` overlay enables kernel DWARF
-and the `dummy` module. Synthetic CVEs pass through the production database
-recipe and sysroot task; no full CVEProject database download is needed.
+and the `dummy` module. Synthetic CVEs pass through OE-Core's shared CVE List
+recipe and `do_patch` dependency; no full CVEProject database download is needed.
 
 Three builds compare filtering disabled, enabled, and enabled with an updated
 database. Checks cover source matching, explicit decisions, VEX references
