@@ -402,7 +402,9 @@ This can reduce Dependency-Track findings for code excluded by your kernel
 configuration. The SBOM remains unchanged, and explicit `CVE_STATUS` decisions
 take precedence.
 
-```sh
+Enable it in your distro configuration or `local.conf`:
+
+```bitbake
 CYCLONEDX_VEX_ADD_KERNEL_CVE = "1"  # Default: "0"
 ```
 
@@ -413,12 +415,10 @@ CYCLONEDX_VEX_ADD_KERNEL_CVE = "1"  # Default: "0"
 > compiled file, vulnerable code can still be present despite a `not_affected`
 > result. **Leave it disabled if that risk is unacceptable.**
 
-It applies only to `virtual/kernel` and follows the latest revision of the
-CVE database by default (`AUTOREV`).
+Enabling the filter automatically fetches the CVE List database, which requires
+several GB of disk space. The filter applies only to the kernel recipe (`virtual/kernel`).
 
-Compiler headers are looked up in the recipe's build dependencies. If a header
-cannot be found or matched to a single file, or a C source file is outside the
-kernel source and build directories, the filter leaves CVE assessments unchanged.
+Missing or ambiguous source information leaves CVE assessments unchanged.
 
 **Kernel configuration:**
 
@@ -435,19 +435,6 @@ PACKAGE_DEBUG_SPLIT_STYLE = "debug-with-srcpkg"
 ```
 
 Missing prerequisites produce a warning and skip automatic exclusions.
-
-**Pin the CVE database for reproducible assessments:**
-
-To use a fixed database revision, set a full
-[CVEProject/cvelistV5](https://github.com/CVEProject/cvelistV5) commit SHA in your
-distro configuration or `local.conf`:
-
-```bitbake
-CYCLONEDX_KERNEL_CVE_DB_SRCREV = "<full commit SHA>"
-```
-
-When pinned, update this value to receive new CVEs and metadata corrections.
-Database updates refresh the assessments without recompiling the kernel.
 
 ### sbom-cve-check Results
 
