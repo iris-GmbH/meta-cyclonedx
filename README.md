@@ -410,6 +410,14 @@ This is disabled by default (`"0"`) and only applies to whichever recipe
 provides `virtual/kernel`. No extra configuration is required: the CVE
 database it relies on is fetched automatically.
 
+The kernel recipe only records which sources it compiled; the CVE database is
+read after `do_rootfs`, when the image's checked VEX is written (see
+[sbom-cve-check Results](#sbom-cve-check-results)), so new CVE data does not
+rebuild the kernel's CycloneDX data, the root filesystem or the images made
+from it. The VEX written by `do_rootfs` (`CYCLONEDX_EXPORT_VEX`) therefore
+carries no kernel statements; `CYCLONEDX_EXPORT_VEX_LINK` points at the
+checked VEX, which does.
+
 ### sbom-cve-check Results
 
 Since Wrynose, OE-core checks the image SPDX SBOM for CVEs with the
@@ -439,7 +447,8 @@ follows. Statements the VEX already has for a CVE and component are kept.
 The merged VEX is written after `do_sbom_cve_check` to
 `CYCLONEDX_EXPORT_SBOM_CVE_CHECK_VEX` (default
 `${IMAGE_NAME}.cyclonedx.sbom-cve-check.vex.json`), and
-`CYCLONEDX_EXPORT_VEX_LINK` points at it. The report is read through the
+`CYCLONEDX_EXPORT_VEX_LINK` points at it. The same checked VEX is written,
+without the sbom-cve-check results, when only kernel CVE filtering is enabled. The report is read through the
 `${IMAGE_LINK_NAME}` link, and `SBOM_CVE_CHECK_EXPORT_CVECHECK` must stay in
 `SBOM_CVE_CHECK_EXPORT_VARS` (the default).
 
