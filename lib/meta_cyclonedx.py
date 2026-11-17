@@ -264,6 +264,13 @@ def normalize_cve_id(cve_id):
     return cve_id
 
 
+STATUS_VEX_JUSTIFICATIONS = {
+    "not-applicable-config": "requires_configuration",
+    "not-applicable-platform": "requires_environment",
+    "ignored": "code_not_present",
+}
+
+
 def add_status_vex_statement(cve, cves, bom_ref, recipe, placeholder,
                              add_timestamps, log=None):
     """
@@ -315,8 +322,9 @@ def add_status_vex_statement(cve, cves, bom_ref, recipe, placeholder,
     analysis = {
         "detail": detail_string
     }
-    if vex_state:
-        analysis["state"] = vex_state
+    analysis["state"] = vex_state
+    if vex_state == "not_affected" and status in STATUS_VEX_JUSTIFICATIONS:
+        analysis["justification"] = STATUS_VEX_JUSTIFICATIONS[status]
 
     # Add timestamps when enabled
     # This provides better tracking of when vulnerabilities were identified and updated
@@ -774,8 +782,8 @@ def _sbom_cve_check_analysis(issue, include_unpatched, unpatched_state):
         analysis = {"state": "not_affected" if kind == "version-not-in-range" else "resolved"}
     elif status == "Ignored":
         analysis = {"state": "not_affected"}
-        if kind == "not-applicable-config":
-            analysis["justification"] = "code_not_present"
+        if kind in STATUS_VEX_JUSTIFICATIONS:
+            analysis["justification"] = STATUS_VEX_JUSTIFICATIONS[kind]
     elif status == "Unpatched" and include_unpatched:
         analysis = {}
         if unpatched_state:
