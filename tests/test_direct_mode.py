@@ -23,6 +23,15 @@ def test_direct_mode_launch_is_a_plain_kas_invocation():
     assert env == {}
 
 
+def test_explicit_container_runtime_options_are_forwarded(monkeypatch):
+    monkeypatch.setenv("KAS_TEST_RUNTIME_ARGS", "--network=host")
+    command, _ = kas_env.kas_invocation("docker")
+    assert command == [str(kas_env.KAS_CONTAINER), "--runtime-args", "--network=host",
+                       "build", "kas.yml"]
+    direct_command, _ = kas_env.kas_invocation(kas_env.KAS_DIRECT)
+    assert direct_command == ["kas", "build", "kas.yml"]
+
+
 def test_container_mode_r5_rides_the_runtime_args_channel():
     command, env = kas_env.kas_invocation(
         "podman", extra_env=kas_env.IMAGE_EXTRA_INSTALL_ENV

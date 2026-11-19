@@ -392,21 +392,56 @@ CYCLONEDX_ADD_VULN_TIMESTAMPS = "0"
 
 ### Kernel CVE Filtering
 
-Kernel CVE feeds are matched by kernel version alone and routinely flag CVEs
-whose affected files were never compiled into your particular kernel
-configuration, so meta-cyclonedx cross-checks each kernel CVE's affected
-files against the sources actually compiled for `virtual/kernel` and marks
-the unaffected ones as `not_affected` in the VEX output, letting
-DependencyTrack automatically filter them out instead of flagging them for
-manual triage:
+This option compares the affected C source files named in a kernel CVE record
+with the source-file list extracted from the kernel and modules' DWARF debug
+information. When the CVE matches your kernel version and none of its affected
+files appear in that list, it adds a VEX assessment of `not_affected` with the
+justification `code_not_present`.
 
-```sh
-CYCLONEDX_VEX_ADD_KERNEL_CVE = "1"
+This can reduce Dependency-Track findings for code excluded by your kernel
+configuration. The SBOM remains unchanged, and explicit `CVE_STATUS` decisions
+take precedence.
+
+Enable it in your distro configuration or `local.conf`:
+
+```bitbake
+CYCLONEDX_VEX_ADD_KERNEL_CVE = "1"  # Default: "0"
 ```
 
-This is disabled by default (`"0"`) and only applies to whichever recipe
-provides `virtual/kernel`. No extra configuration is required: the CVE
-database it relies on is fetched automatically.
+> [!CAUTION]
+> A file missing from the DWARF source list is treated as evidence that its code
+> was not built. The check does not determine whether a vulnerability can be
+> exploited. If a CVE record omits an affected file, or debug information omits a
+> compiled file, vulnerable code can still be present despite a `not_affected`
+> result. **Leave it disabled if that risk is unacceptable.**
+
+Enabling the filter automatically fetches the CVE List database, which requires
+several GB of disk space. The filter applies only to the kernel recipe (`virtual/kernel`).
+
+Missing or ambiguous source information leaves CVE assessments unchanged.
+
+**Kernel configuration:**
+
+- Kernel debug information enabled (`CONFIG_DEBUG_INFO=y`, e.g. select DWARF4).
+- Split debug information disabled (`CONFIG_DEBUG_INFO_SPLIT=n`).
+- Module compression disabled: compressed modules do not provide packaging
+  debug-source records. Every packaged module must have source evidence.
+
+**Yocto build settings:**
+
+Enable source-aware debug packaging and retain build files in the kernel `.bbappend`:
+
+```bitbake
+INHIBIT_PACKAGE_DEBUG_SPLIT = "0"
+PACKAGE_DEBUG_SPLIT_STYLE = "debug-with-srcpkg"
+# if you use the rm-work class (https://docs.yoctoproject.org/singleindex.html#rm-work)
+# add the kernel to the exclude list, so that the source code can be inspected
+RM_WORK_EXCLUDE += "${PN}"
+
+
+Missing prerequisites or packaged modules without debug-source records produce
+a warning and skip automatic exclusions. Missing or malformed CVE version
+metadata retains that CVE without interrupting assessment of other records.
 
 ### sbom-cve-check Results
 

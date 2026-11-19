@@ -615,7 +615,7 @@ def runtime_env_args(env):
     return args
 
 
-def kas_invocation(engine, extra_env=None):
+def kas_invocation(engine, extra_env=None, config="kas.yml"):
     """The (command, process-env extras) for one kas build invocation.
 
     Container mode drives kas through the submodule's wrapper
@@ -628,11 +628,14 @@ def kas_invocation(engine, extra_env=None):
     reaches the build config identically in both modes.
     """
     if engine == KAS_DIRECT:
-        return ["kas", "build", "kas.yml"], dict(extra_env or {})
+        return ["kas", "build", config], dict(extra_env or {})
     command = [str(KAS_CONTAINER)]
+    runtime_args = os.environ.get("KAS_TEST_RUNTIME_ARGS")
+    if runtime_args:
+        command += ["--runtime-args", runtime_args]
     if extra_env:
         command += runtime_env_args(extra_env)
-    return command + ["build", "kas.yml"], {}
+    return command + ["build", config], {}
 
 
 def tail(text, lines=60):

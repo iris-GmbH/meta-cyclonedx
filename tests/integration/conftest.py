@@ -113,8 +113,11 @@ class KasRunRecorder:
     def __getitem__(self, name):
         return self.results[name]
 
-    def invoke(self, name, extra_env=None):
+    def invoke(self, name, extra_env=None, config="kas.yml"):
         """Run the matrix configuration under this name; return its record.
+
+        *config* selects an alternative kas profile, such as the kernel-CVE
+        scenario; the default R1-R5 profile remains ``kas.yml``.
 
         *extra_env* is set in the build environment (the image-change
         run's install-list forwarding) through the mode-appropriate
@@ -170,7 +173,8 @@ class KasRunRecorder:
         kas_env.ensure_fixture_layer()
         env = kas_env.workspace_env()
         env["KAS_CONTAINER_ENGINE"] = self.engine
-        command, env_extras = kas_env.kas_invocation(self.engine, extra_env=extra_env)
+        command, env_extras = kas_env.kas_invocation(
+            self.engine, extra_env=extra_env, config=config)
         env.update(env_extras)
         returncode, lines = self._stream(command, env)
         build = KasBuildResult(
