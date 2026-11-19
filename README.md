@@ -434,26 +434,10 @@ Enable source-aware debug packaging and retain build files in the kernel `.bbapp
 ```bitbake
 INHIBIT_PACKAGE_DEBUG_SPLIT = "0"
 PACKAGE_DEBUG_SPLIT_STYLE = "debug-with-srcpkg"
+# if you use the rm-work class (https://docs.yoctoproject.org/singleindex.html#rm-work)
+# add the kernel to the exclude list, so that the source code can we inspected
 RM_WORK_EXCLUDE += "${PN}"
-```
 
-`RM_WORK_EXCLUDE` only takes effect when the `rm_work` class is enabled. In a
-kernel `.bbappend`, `${PN}` expands to that kernel recipe's name, for example
-`linux-yocto`, and excludes its working directory from automatic cleanup.
-The filter needs the kernel configuration, source/build trees and packaging
-evidence for later assessments, including database updates. Keeping these
-files increases disk usage.
-
-**Do not use the `${PN}` form in global configuration:** it would match each
-recipe's own name and effectively disable cleanup for every recipe. In
-`local.conf` or distro configuration, use the actual kernel provider's name:
-
-```bitbake
-RM_WORK_EXCLUDE += "linux-yocto"
-```
-
-This setting does not protect against explicit cleanup commands or recreate
-missing source/build trees when kernel outputs are restored only from sstate.
 
 Missing prerequisites or packaged modules without debug-source records produce
 a warning and skip automatic exclusions. Missing or malformed CVE version
