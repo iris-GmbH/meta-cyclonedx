@@ -77,6 +77,21 @@ def test_ignored_status_becomes_not_affected_with_justification():
     assert "JUSTIFICATION: upstream not affected" in statement["analysis"]["detail"]
 
 
+def test_ignored_justification_follows_cve_status_keyword():
+    statements = []
+    for cve_id, status in (("CVE-2025-10", "not-applicable-config"),
+                            ("CVE-2025-11", "not-applicable-platform"),
+                            ("CVE-2025-12", "ignored"),
+                            ("CVE-2025-13", "disputed")):
+        cve = (cve_id, "Ignored", status, "reason")
+        meta_cyclonedx.add_status_vex_statement(
+            cve, statements, "ref-x",
+            "myrecipe", PLACEHOLDER, add_timestamps=False)
+
+    assert [s["analysis"].get("justification") for s in statements] == [
+        "requires_configuration", "requires_environment", "code_not_present", None]
+
+
 def test_irrelevant_status_produces_no_statement():
     statements = []
     meta_cyclonedx.add_status_vex_statement(
