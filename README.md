@@ -435,7 +435,7 @@ Enable source-aware debug packaging and retain build files in the kernel `.bbapp
 INHIBIT_PACKAGE_DEBUG_SPLIT = "0"
 PACKAGE_DEBUG_SPLIT_STYLE = "debug-with-srcpkg"
 # if you use the rm-work class (https://docs.yoctoproject.org/singleindex.html#rm-work)
-# add the kernel to the exclude list, so that the source code can we inspected
+# add the kernel to the exclude list, so that the source code can be inspected
 RM_WORK_EXCLUDE += "${PN}"
 
 
