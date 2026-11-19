@@ -445,9 +445,9 @@ included in the `hashes` property.
 
 A `SRC_URI` entry that embeds credentials, e.g.
 `https://user:token@git.internal/repo.git`, is published without them: the
-reference `url` uses the credential-free URL, which stays usable with the
-consumer's own credentials. The build log notes the stripping and masks the
-credentials.
+reference `url` and the `yocto:src_uri` property use the credential-free URL,
+which stays usable with the consumer's own credentials. The build log notes
+the stripping and masks the credentials.
 
 Direct `file://` entries that resolve inside a configured Yocto metadata layer
 are included as `other` references. Their URL has the form
@@ -465,6 +465,13 @@ skipped with a warning. References are collected without network access;
 sources whose revision can only be resolved by contacting the network (e.g.
 `AUTOREV`) are skipped with a warning. Every warning identifies the affected
 `SRC_URI` entry, with credentials masked.
+
+For CycloneDX SBOMs with version 1.7, the URL, revision and options of a source
+are added as properties named `yocto:src_uri`, `yocto:srcrev` and
+`yocto:src_uri:{option}` respectively. Local file references also include
+`yocto:layer:name` and `yocto:layer:path`. When present, the corresponding
+top-level Yocto metadata layer reference supplies its remote URL, revision and
+modification state.
 
 ### Component Properties
 

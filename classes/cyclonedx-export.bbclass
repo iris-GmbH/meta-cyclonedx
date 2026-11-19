@@ -707,6 +707,8 @@ def generate_layer_references(d):
     """
     import oe.buildcfg
 
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION')
+
     references = []
     layers = oe.buildcfg.get_layer_revisions(d)
     for (path, name, branch, rev, ismodified) in layers:
@@ -723,6 +725,25 @@ def generate_layer_references(d):
             "type": "vcs",
             "comment": f"Yocto metadata layer {name}{' with uncommitted changes' if ismodified else ''}"
         }
+        if spec_version == "1.7":
+            reference["properties"] = [
+                {
+                    "name": "yocto:layer:name",
+                    "value": name
+                },
+                {
+                    "name": "yocto:layer:remote_url",
+                    "value": public_remote_url
+                },
+                {
+                    "name": "yocto:layer:rev",
+                    "value": rev
+                },
+                {
+                    "name": "yocto:layer:is_modified",
+                    "value": "true" if ismodified else "false"
+                }
+            ]
         references.append(reference)
     return references
 
@@ -766,6 +787,8 @@ def generate_source_references(d):
     import bb.fetch2
     import bb.utils
 
+    spec_version = d.getVar('CYCLONEDX_SPEC_VERSION')
+
     references = []
     checksum_alg_map = {
         "md5": "MD5",
@@ -798,6 +821,9 @@ def generate_source_references(d):
                 bb.warn(f"cyclonedx-export: cannot resolve SRC_URI entry {safe_url} without network access, skipping its external reference")
                 continue
 
+            revision = None
+            local_layer = None
+            property_source_uri = public_url
             if url_data.type == "file":
                 try:
                     local_path = fetcher.localpath(url)
@@ -820,6 +846,9 @@ def generate_source_references(d):
                     "type": "other",
                     "comment": f"Yocto-local build input from layer {local_layer['name']}"
                 }
+                # Never expose an absolute build-host path in SBOM properties.
+                if os.path.isabs(getattr(url_data, "basepath", "")):
+                    property_source_uri = reference["url"]
                 if os.path.isfile(local_path):
                     reference["hashes"] = [{
                         "alg": "SHA-512",
@@ -846,6 +875,35 @@ def generate_source_references(d):
                             "content": checksum
                         })
 
+            if spec_version == "1.7":
+                reference.setdefault("properties", [])
+                reference["properties"].append({
+                    "name": "yocto:src_uri",
+                    "value": property_source_uri
+                })
+                parm = getattr(url_data, "parm", None)
+                if parm:
+                    for key in parm:
+                        reference["properties"].append({
+                            "name": "yocto:src_uri:" + key,
+                            "value": parm[key]
+                        })
+                if local_layer:
+                    reference["properties"].extend([
+                        {
+                            "name": "yocto:layer:name",
+                            "value": local_layer["name"]
+                        },
+                        {
+                            "name": "yocto:layer:path",
+                            "value": local_layer["path"]
+                        }
+                    ])
+                if revision:
+                    reference["properties"].append({
+                        "name": "yocto:srcrev",
+                        "value": revision
+                    })
             references.append(reference)
     finally:
         if no_network is None:
